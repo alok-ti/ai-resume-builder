@@ -609,3 +609,140 @@ export async function generateInterviewPrep(
   }
 }
 
+/**
+ * Parse Resume text using Gemini
+ */
+export async function parseResume(rawText: string): Promise<any> {
+  if (!apiKey) {
+    console.warn("GEMINI_API_KEY is not configured. Running in Mock Mode for resume parsing.");
+    return generateMockParsedResume(rawText);
+  }
+
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const prompt = `
+      You are an expert senior document-processing engineer specializing in parsing resume text.
+      Your task is to parse the following raw text from a resume and extract the structured content exactly as specified below.
+      
+      Raw Resume Text:
+      """
+      ${rawText}
+      """
+      
+      You must extract and structure the following sections:
+      1. personalInfo:
+         - fullName: candidate's full name.
+         - title: professional title or target role.
+         - email: contact email address.
+         - phone: contact phone number.
+         - location: geographic location (city, state/country).
+         - linkedin: LinkedIn profile URL.
+         - github: GitHub profile URL.
+         - portfolio: portfolio or personal website URL.
+         - summary: a compelling, professional summary.
+      2. workExperience: Array of jobs, each containing:
+         - company: name of the company or organization.
+         - position: job title or position.
+         - location: location of job.
+         - startDate: start date (e.g. YYYY-MM or "Month YYYY").
+         - endDate: end date (e.g. YYYY-MM or "Month YYYY" or "Present").
+         - current: boolean (true if currently working there).
+         - description: Array of strings representing bullet points describing accomplishments and duties.
+      3. education: Array of education items, each containing:
+         - school: school or university name.
+         - degree: degree or certificate earned (e.g. B.S., M.S.).
+         - fieldOfStudy: field of study (e.g. Computer Science).
+         - location: location of school.
+         - startDate: start date.
+         - endDate: end date.
+         - current: boolean.
+         - description: any extra notes or GPA.
+      4. projects: Array of projects, each containing:
+         - projectName: project name.
+         - description: description of the project.
+         - technologies: comma-separated list of technologies used (e.g. "React, Node.js").
+         - githubUrl: project GitHub repository URL.
+         - liveUrl: live project URL.
+      5. skills:
+         - technicalSkills: Array of technical/hard skills, tools, or frameworks.
+         - softSkills: Array of soft/interpersonal/process skills.
+      6. certificates: Array of certifications, each containing:
+         - name: certification name.
+         - issuer: organization issuing the certificate.
+         - date: date of certification.
+         - url: certification validation URL.
+      7. languages: Array of languages, each containing:
+         - language: language name.
+         - proficiency: proficiency level (e.g., Native, Fluent, Conversational, Basic, or leave empty).
+
+      Ensure all fields are populated with values extracted from the text. If a field cannot be found, use an empty string "" (or empty array [] for lists).
+      Provide your output ONLY as a valid JSON object matching the described structure.
+      Do not wrap your response in markdown code blocks like \`\`\`json. Return only the raw JSON string.
+    `;
+
+    const result = await model.generateContent(prompt);
+    const outputText = result.response.text().trim();
+    const cleanJson = outputText.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (err) {
+    console.error('Failed to parse resume using Gemini API, falling back to mock parser:', err);
+    return generateMockParsedResume(rawText);
+  }
+}
+
+/**
+ * Helper to generate mock parsed resume data from raw text when API key is missing or parsing fails
+ */
+function generateMockParsedResume(rawText: string): any {
+  const emailMatch = rawText.match(/[\w.-]+@[\w.-]+\.\w+/);
+  const phoneMatch = rawText.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/);
+  
+  // Extract a plausible name (e.g. the first non-empty line of the text)
+  const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+  const mockName = lines[0] || 'John Doe';
+  
+  return {
+    personalInfo: {
+      fullName: mockName,
+      title: 'Professional Resume',
+      email: emailMatch ? emailMatch[0] : '',
+      phone: phoneMatch ? phoneMatch[0] : '',
+      location: '',
+      linkedin: '',
+      github: '',
+      portfolio: '',
+      summary: rawText.substring(0, 400) + (rawText.length > 400 ? '...' : ''),
+    },
+    workExperience: [
+      {
+        company: 'Sample Company',
+        position: 'Role Title',
+        location: '',
+        startDate: '2020',
+        endDate: 'Present',
+        current: true,
+        description: ['Demonstrated strong performance and collaboration.', 'Managed project milestones and deliverables.']
+      }
+    ],
+    education: [
+      {
+        school: 'University or College',
+        degree: 'Degree / Program',
+        fieldOfStudy: '',
+        location: '',
+        startDate: '',
+        endDate: '',
+        current: false,
+        description: ''
+      }
+    ],
+    projects: [],
+    skills: {
+      technicalSkills: [],
+      softSkills: []
+    },
+    certificates: [],
+    languages: []
+  };
+}
+
