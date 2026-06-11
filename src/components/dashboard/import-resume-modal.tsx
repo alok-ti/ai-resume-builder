@@ -8,10 +8,8 @@ import {
   FileText, 
   CheckCircle, 
   Loader2, 
-  Sparkles,
-  Settings,
-  ShieldAlert,
-  Database
+  Database,
+  ShieldAlert
 } from 'lucide-react';
 
 interface ImportResumeModalProps {
@@ -20,7 +18,7 @@ interface ImportResumeModalProps {
   showToast: (message: string, type: 'success' | 'error' | 'info') => void;
 }
 
-type ImportStep = 'idle' | 'reading' | 'parsing' | 'improving' | 'saving' | 'success';
+type ImportStep = 'idle' | 'reading' | 'uploading' | 'saving' | 'success';
 
 export function ImportResumeModal({ isOpen, onClose, showToast }: ImportResumeModalProps) {
   const router = useRouter();
@@ -84,22 +82,17 @@ export function ImportResumeModal({ isOpen, onClose, showToast }: ImportResumeMo
 
     setError(null);
     setStep('reading');
-    setProgress(15);
+    setProgress(20);
 
     try {
       const formData = new FormData();
       formData.append('file', file);
 
-      // Transition to AI parsing step shortly
-      setTimeout(() => {
-        setStep('parsing');
-        setProgress(40);
-      }, 1000);
+      // Simulate a small file read step for better user feel
+      await new Promise((resolve) => setTimeout(resolve, 600));
 
-      setTimeout(() => {
-        setStep('improving');
-        setProgress(70);
-      }, 2500);
+      setStep('uploading');
+      setProgress(50);
 
       const response = await fetch('/api/resume/import', {
         method: 'POST',
@@ -107,7 +100,7 @@ export function ImportResumeModal({ isOpen, onClose, showToast }: ImportResumeMo
       });
 
       setStep('saving');
-      setProgress(90);
+      setProgress(85);
 
       const result = await response.json();
 
@@ -117,17 +110,17 @@ export function ImportResumeModal({ isOpen, onClose, showToast }: ImportResumeMo
 
       setStep('success');
       setProgress(100);
-      showToast('Resume parsed and AI-improved version created successfully!', 'success');
+      showToast('Resume imported successfully!', 'success');
 
       // Defer redirection to let the user see the success state
       setTimeout(() => {
         onClose();
-        router.push(`/builder/${result.improvedId}`);
-      }, 1500);
+        router.push(`/builder/${result.resumeId}`);
+      }, 1000);
 
     } catch (err: any) {
       console.error('File import failed:', err);
-      setError(err.message || 'An unexpected error occurred during resume parsing.');
+      setError(err.message || 'An unexpected error occurred during resume import.');
       setStep('idle');
       setProgress(0);
     }
@@ -136,9 +129,8 @@ export function ImportResumeModal({ isOpen, onClose, showToast }: ImportResumeMo
   const getStepLabel = () => {
     switch (step) {
       case 'reading': return 'Reading resume file content...';
-      case 'parsing': return 'AI Parsing section layouts & text...';
-      case 'improving': return 'AI Optimizing bullet points & skills...';
-      case 'saving': return 'Syncing relational database records...';
+      case 'uploading': return 'Extracting text content from file...';
+      case 'saving': return 'Creating resume draft in database...';
       case 'success': return 'Import successful! Opening builder...';
       default: return 'Ready to upload';
     }
@@ -147,10 +139,9 @@ export function ImportResumeModal({ isOpen, onClose, showToast }: ImportResumeMo
   const getStepIcon = () => {
     switch (step) {
       case 'reading': return <FileText className="w-5 h-5 text-blue-400 animate-pulse" />;
-      case 'parsing': return <Settings className="w-5 h-5 text-indigo-400 animate-spin" />;
-      case 'improving': return <Sparkles className="w-5 h-5 text-amber-400 animate-bounce" />;
+      case 'uploading': return <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />;
       case 'saving': return <Database className="w-5 h-5 text-emerald-400 animate-pulse" />;
-      case 'success': return <CheckCircle className="w-5 h-5 text-emerald-400" />;
+      case 'success': return <CheckCircle className="w-5 h-5 text-emerald-400 animate-pulse" />;
       default: return null;
     }
   };
@@ -227,7 +218,7 @@ export function ImportResumeModal({ isOpen, onClose, showToast }: ImportResumeMo
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 bg-slate-900 border border-slate-800 hover:bg-slate-800 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+                  className="px-4 py-2 bg-slate-900 border border-slate-800 hover:bg-slate-850 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -237,8 +228,8 @@ export function ImportResumeModal({ isOpen, onClose, showToast }: ImportResumeMo
                   disabled={!file}
                   className="px-4.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40 cursor-pointer shadow-md shadow-blue-600/10"
                 >
-                  <Sparkles className="w-3.5 h-3.5 text-blue-200" />
-                  Parse & Repair Resume
+                  <UploadCloud className="w-3.5 h-3.5" />
+                  Upload & Import
                 </button>
               </div>
             </>
