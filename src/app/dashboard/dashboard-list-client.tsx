@@ -3,7 +3,7 @@
 import React, { useState, useTransition } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { createResume, deleteResume } from './actions';
+import { createResume, deleteResume, duplicateResume } from './actions';
 import { logout } from '../auth/actions';
 import {
   FileText,
@@ -21,7 +21,8 @@ import {
   Activity,
   CheckCircle,
   XCircle,
-  Info
+  Info,
+  Copy
 } from 'lucide-react';
 
 interface DashboardListClientProps {
@@ -101,6 +102,30 @@ export function DashboardListClient({ resumes, profile, userEmail }: DashboardLi
         }
       });
     }
+  };
+
+  const [duplicatingId, setDuplicatingId] = useState<string | null>(null);
+  const [, startDuplicateTransition] = useTransition();
+
+  const handleDuplicate = (id: string) => {
+    setDuplicatingId(id);
+    showToast('Duplicating resume...', 'info');
+    startDuplicateTransition(async () => {
+      try {
+        const result = await duplicateResume(id);
+        if (result?.success) {
+          showToast('Resume duplicated successfully.', 'success');
+          router.refresh();
+        } else {
+          showToast(result?.error || 'Failed to duplicate resume.', 'error');
+        }
+      } catch (err) {
+        console.error(err);
+        showToast('Failed to duplicate resume.', 'error');
+      } finally {
+        setDuplicatingId(null);
+      }
+    });
   };
 
   // Helper to get relative time or simple formatted date
@@ -399,19 +424,35 @@ export function DashboardListClient({ resumes, profile, userEmail }: DashboardLi
                             {resume.title}
                           </Link>
                           
-                          <button
-                            type="button"
-                            disabled={isDeleting}
-                            onClick={() => handleDelete(resume.id)}
-                            className="text-slate-500 hover:text-red-400 p-1 rounded transition-colors disabled:opacity-30 self-start cursor-pointer"
-                            title="Delete resume"
-                          >
-                            {isDeleting ? (
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-3.5 h-3.5" />
-                            )}
-                          </button>
+                          <div className="flex items-center gap-1.5 self-start">
+                            <button
+                              type="button"
+                              disabled={duplicatingId !== null || isDeleting}
+                              onClick={() => handleDuplicate(resume.id)}
+                              className="text-slate-500 hover:text-blue-400 p-1 rounded transition-colors disabled:opacity-30 cursor-pointer"
+                              title="Duplicate resume"
+                            >
+                              {duplicatingId === resume.id ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Copy className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={isDeleting || duplicatingId !== null}
+                              onClick={() => handleDelete(resume.id)}
+                              className="text-slate-500 hover:text-red-400 p-1 rounded transition-colors disabled:opacity-30 cursor-pointer"
+                              title="Delete resume"
+                            >
+                              {isDeleting ? (
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              ) : (
+                                <Trash2 className="w-3.5 h-3.5" />
+                              )}
+                            </button>
+                          </div>
                         </div>
 
                         <div className="flex items-center gap-1.5 flex-wrap">

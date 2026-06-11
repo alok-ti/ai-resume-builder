@@ -4,6 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { ResumeValues } from '@/types/resume-schema';
 import { Mail, Phone, MapPin, Globe, ExternalLink, Award, Trophy } from 'lucide-react';
 import { LinkedinIcon as Linkedin, GithubIcon as Github } from '@/components/shared/icons';
+import { EditableText } from './editable-text';
 
 interface LivePreviewProps {
   data: ResumeValues;
@@ -86,7 +87,7 @@ export function LivePreview({ data }: LivePreviewProps) {
           Professional Summary
         </h3>
         <p className="text-xs leading-relaxed text-slate-700 whitespace-pre-line font-light">
-          {personalInfo.summary}
+          <EditableText fieldName="personalInfo.summary" value={personalInfo.summary} placeholder="Summary..." />
         </p>
       </div>
     );
@@ -110,22 +111,29 @@ export function LivePreview({ data }: LivePreviewProps) {
             <div key={exp.id || index} className="space-y-1">
               <div className="flex justify-between items-start">
                 <div>
-                  <span className={`font-bold text-xs text-slate-900 ${templateId === 'professional' ? 'font-serif' : ''}`}>{exp.position}</span>
+                  <span className={`font-bold text-xs text-slate-900 ${templateId === 'professional' ? 'font-serif' : ''}`}>
+                    <EditableText fieldName={`workExperience.${index}.position`} value={exp.position} placeholder="Position title" />
+                  </span>
                   <span className="text-slate-400 mx-1.5">|</span>
-                  <span className="font-semibold text-xs text-slate-700">{exp.company}</span>
+                  <span className="font-semibold text-xs text-slate-700">
+                    <EditableText fieldName={`workExperience.${index}.company`} value={exp.company} placeholder="Company name" />
+                  </span>
                 </div>
                 <span className="text-[10px] text-slate-500 font-semibold bg-slate-100/80 border border-slate-200/50 rounded px-2 py-0.5 whitespace-nowrap">
-                  {exp.startDate} – {exp.current ? 'Present' : exp.endDate}
+                  <EditableText fieldName={`workExperience.${index}.startDate`} value={exp.startDate} placeholder="Start Date" />
+                  {" – "}
+                  <EditableText fieldName={`workExperience.${index}.endDate`} value={exp.endDate} placeholder="End Date" />
                 </span>
               </div>
               {exp.location && (
-                <div className="text-[10px] text-slate-500 italic">{exp.location}</div>
+                <div className="text-[10px] text-slate-500 italic">
+                  <EditableText fieldName={`workExperience.${index}.location`} value={exp.location} placeholder="Location" />
+                </div>
               )}
               {exp.description && (
-                <div 
-                  className="preview-rich-text text-xs text-slate-700 leading-relaxed font-light"
-                  dangerouslySetInnerHTML={{ __html: exp.description }}
-                />
+                <div className="preview-rich-text text-xs text-slate-700 leading-relaxed font-light">
+                  <EditableText fieldName={`workExperience.${index}.description`} value={exp.description} isHtml={true} placeholder="Description" />
+                </div>
               )}
             </div>
           ))}
@@ -152,10 +160,12 @@ export function LivePreview({ data }: LivePreviewProps) {
             <div key={proj.id || index} className="space-y-1">
               <div className="flex justify-between items-start">
                 <div>
-                  <span className={`font-bold text-xs text-slate-900 ${templateId === 'professional' ? 'font-serif' : ''}`}>{proj.projectName}</span>
+                  <span className={`font-bold text-xs text-slate-900 ${templateId === 'professional' ? 'font-serif' : ''}`}>
+                    <EditableText fieldName={`projects.${index}.projectName`} value={proj.projectName} placeholder="Project Name" />
+                  </span>
                   {proj.technologies && (
                     <span className="ml-2 text-[9px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded font-semibold border border-indigo-100">
-                      {proj.technologies}
+                      <EditableText fieldName={`projects.${index}.technologies`} value={proj.technologies} placeholder="Technologies" />
                     </span>
                   )}
                 </div>
@@ -173,10 +183,9 @@ export function LivePreview({ data }: LivePreviewProps) {
                 </div>
               </div>
               {proj.description && (
-                <div 
-                  className="preview-rich-text text-xs text-slate-700 leading-relaxed font-light"
-                  dangerouslySetInnerHTML={{ __html: proj.description }}
-                />
+                <div className="preview-rich-text text-xs text-slate-700 leading-relaxed font-light">
+                  <EditableText fieldName={`projects.${index}.description`} value={proj.description} placeholder="Description" />
+                </div>
               )}
             </div>
           ))}
@@ -202,17 +211,25 @@ export function LivePreview({ data }: LivePreviewProps) {
           {education.map((edu, index) => (
             <div key={edu.id || index} className="flex justify-between items-start">
               <div>
-                <span className={`font-bold text-xs text-slate-900 ${templateId === 'professional' ? 'font-serif' : ''}`}>{edu.degree}</span>
+                <span className={`font-bold text-xs text-slate-900 ${templateId === 'professional' ? 'font-serif' : ''}`}>
+                  <EditableText fieldName={`education.${index}.degree`} value={edu.degree} placeholder="Degree" />
+                </span>
                 {edu.fieldOfStudy && (
                   <>
                     <span className="text-slate-400 mx-1.5 font-light">in</span>
-                    <span className="font-semibold text-xs text-slate-700">{edu.fieldOfStudy}</span>
+                    <span className="font-semibold text-xs text-slate-700">
+                      <EditableText fieldName={`education.${index}.fieldOfStudy`} value={edu.fieldOfStudy} placeholder="Field of study" />
+                    </span>
                   </>
                 )}
-                <div className="text-xs text-slate-600 mt-0.5 font-medium">{edu.school}</div>
+                <div className="text-xs text-slate-600 mt-0.5 font-medium">
+                  <EditableText fieldName={`education.${index}.school`} value={edu.school} placeholder="School" />
+                </div>
               </div>
               <span className="text-[10px] text-slate-500 font-semibold bg-slate-100/80 border border-slate-200/50 rounded px-2 py-0.5 whitespace-nowrap">
-                {edu.startDate} – {edu.current ? 'Present' : edu.endDate}
+                <EditableText fieldName={`education.${index}.startDate`} value={edu.startDate} placeholder="Start Date" />
+                {" – "}
+                <EditableText fieldName={`education.${index}.endDate`} value={edu.endDate} placeholder="End Date" />
               </span>
             </div>
           ))}
@@ -238,16 +255,26 @@ export function LivePreview({ data }: LivePreviewProps) {
           {skills?.technicalSkills && skills.technicalSkills.length > 0 && (
             <div>
               <h4 className="font-bold text-slate-950 mb-0.5">Technical Skills</h4>
-              <p className="text-slate-700 leading-relaxed font-light">
-                {skills.technicalSkills.join(', ')}
+              <p className="text-slate-700 leading-relaxed font-light flex flex-wrap gap-1">
+                {skills.technicalSkills.map((sk, idx) => (
+                  <span key={idx} className="inline-block">
+                    <EditableText fieldName={`skills.technicalSkills.${idx}`} value={sk} placeholder="Skill" />
+                    {idx < skills.technicalSkills.length - 1 && <span className="text-slate-400 mr-1">,</span>}
+                  </span>
+                ))}
               </p>
             </div>
           )}
           {skills?.softSkills && skills.softSkills.length > 0 && (
             <div>
               <h4 className="font-bold text-slate-950 mb-0.5">Soft Skills</h4>
-              <p className="text-slate-700 leading-relaxed font-light">
-                {skills.softSkills.join(', ')}
+              <p className="text-slate-700 leading-relaxed font-light flex flex-wrap gap-1">
+                {skills.softSkills.map((sk, idx) => (
+                  <span key={idx} className="inline-block">
+                    <EditableText fieldName={`skills.softSkills.${idx}`} value={sk} placeholder="Skill" />
+                    {idx < skills.softSkills.length - 1 && <span className="text-slate-400 mr-1">,</span>}
+                  </span>
+                ))}
               </p>
             </div>
           )}
@@ -274,11 +301,17 @@ export function LivePreview({ data }: LivePreviewProps) {
           {certificates.map((cert, idx) => (
             <li key={cert.id || idx} className="space-y-0.5">
               <div className="flex justify-between">
-                <span className="font-bold text-slate-900">{cert.name}</span>
-                <span className="text-slate-400 text-[10px] font-medium shrink-0">{cert.date}</span>
+                <span className="font-bold text-slate-900">
+                  <EditableText fieldName={`certificates.${idx}.name`} value={cert.name} placeholder="Certificate name" />
+                </span>
+                <span className="text-slate-400 text-[10px] font-medium shrink-0">
+                  <EditableText fieldName={`certificates.${idx}.date`} value={cert.date} placeholder="Date" />
+                </span>
               </div>
               <div className="flex justify-between text-[10px] text-slate-500">
-                <span className="font-medium">{cert.issuer}</span>
+                <span className="font-medium">
+                  <EditableText fieldName={`certificates.${idx}.issuer`} value={cert.issuer} placeholder="Issuer" />
+                </span>
                 {cert.url && (
                   <a href={cert.url} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline flex items-center gap-0.5 font-bold">
                     Verify <ExternalLink className="w-2 h-2" />
@@ -310,11 +343,80 @@ export function LivePreview({ data }: LivePreviewProps) {
           {achievements.map((ach, idx) => (
             <li key={ach.id || idx} className="space-y-0.5">
               <div className="flex justify-between">
-                <span className="font-bold text-slate-900">{ach.title}</span>
-                <span className="text-slate-400 text-[10px] font-medium shrink-0">{ach.date}</span>
+                <span className="font-bold text-slate-900">
+                  <EditableText fieldName={`achievements.${idx}.title`} value={ach.title} placeholder="Achievement title" />
+                </span>
+                <span className="text-slate-400 text-[10px] font-medium shrink-0">
+                  <EditableText fieldName={`achievements.${idx}.date`} value={ach.date} placeholder="Date" />
+                </span>
               </div>
               {ach.description && (
-                <p className="text-[10px] text-slate-600 leading-relaxed font-light">{ach.description}</p>
+                <p className="text-[10px] text-slate-600 leading-relaxed font-light">
+                  <EditableText fieldName={`achievements.${idx}.description`} value={ach.description} placeholder="Description" />
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  };
+
+  const renderCustomSection = (key: string) => {
+    const section = data.customSections?.[key] as any;
+    const isVisible = visibleSections?.[key] ?? true;
+    if (!section || !isVisible) return null;
+    return (
+      <div className="space-y-3">
+        <h3 className={`text-xs font-bold uppercase tracking-wider pb-1 border-b ${
+          templateId === 'professional'
+            ? 'font-serif text-indigo-900 border-indigo-200'
+            : templateId === 'executive'
+            ? 'font-sans text-slate-800 border-slate-200'
+            : 'font-sans text-slate-900 border-slate-200'
+        }`}>
+          <EditableText
+            fieldName={`customSections.${key}.title`}
+            value={section.title}
+            placeholder="Custom Section Title"
+          />
+        </h3>
+        <ul className="space-y-2 text-xs">
+          {(section.items || []).map((item: any, idx: number) => (
+            <li key={item.id || idx} className="space-y-0.5">
+              <div className="flex justify-between">
+                <span className="font-bold text-slate-900">
+                  <EditableText
+                    fieldName={`customSections.${key}.items.${idx}.title`}
+                    value={item.title}
+                    placeholder="Item Title"
+                  />
+                </span>
+                <span className="text-slate-400 text-[10px] font-medium shrink-0">
+                  <EditableText
+                    fieldName={`customSections.${key}.items.${idx}.date`}
+                    value={item.date || ''}
+                    placeholder="Date"
+                  />
+                </span>
+              </div>
+              {item.subtitle && (
+                <div className="text-[10px] text-slate-500 font-medium">
+                  <EditableText
+                    fieldName={`customSections.${key}.items.${idx}.subtitle`}
+                    value={item.subtitle}
+                    placeholder="Subtitle"
+                  />
+                </div>
+              )}
+              {item.description && (
+                <p className="text-[10px] text-slate-600 leading-relaxed font-light whitespace-pre-line">
+                  <EditableText
+                    fieldName={`customSections.${key}.items.${idx}.description`}
+                    value={item.description}
+                    placeholder="Description"
+                  />
+                </p>
               )}
             </li>
           ))}
@@ -324,6 +426,9 @@ export function LivePreview({ data }: LivePreviewProps) {
   };
 
   const renderSection = (key: string) => {
+    if (key.startsWith('custom_')) {
+      return renderCustomSection(key);
+    }
     switch (key) {
       case 'workExperience':
         return renderExperience();
@@ -344,13 +449,13 @@ export function LivePreview({ data }: LivePreviewProps) {
 
   const renderContactsList = (layout: 'inline' | 'stacked') => {
     const items = [
-      personalInfo?.email && { icon: <Mail className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.email },
-      personalInfo?.phone && { icon: <Phone className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.phone },
-      personalInfo?.location && { icon: <MapPin className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.location },
-      personalInfo?.linkedin && { icon: <Linkedin className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.linkedin.replace(/^https?:\/\/(www\.)?/, '') },
-      personalInfo?.github && { icon: <Github className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.github.replace(/^https?:\/\/(www\.)?/, '') },
-      personalInfo?.portfolio && { icon: <Globe className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.portfolio.replace(/^https?:\/\/(www\.)?/, '') },
-    ].filter(Boolean) as Array<{ icon: React.ReactNode; val: string }>;
+      personalInfo?.email && { icon: <Mail className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.email, field: 'personalInfo.email', ph: 'Email' },
+      personalInfo?.phone && { icon: <Phone className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.phone, field: 'personalInfo.phone', ph: 'Phone' },
+      personalInfo?.location && { icon: <MapPin className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.location, field: 'personalInfo.location', ph: 'Location' },
+      personalInfo?.linkedin && { icon: <Linkedin className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.linkedin, field: 'personalInfo.linkedin', ph: 'LinkedIn' },
+      personalInfo?.github && { icon: <Github className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.github, field: 'personalInfo.github', ph: 'GitHub' },
+      personalInfo?.portfolio && { icon: <Globe className="w-3 h-3 text-slate-400 shrink-0" />, val: personalInfo.portfolio, field: 'personalInfo.portfolio', ph: 'Portfolio' },
+    ].filter(Boolean) as Array<{ icon: React.ReactNode; val: string; field: string; ph: string }>;
 
     if (layout === 'stacked') {
       return (
@@ -358,7 +463,9 @@ export function LivePreview({ data }: LivePreviewProps) {
           {items.map((item, index) => (
             <div key={index} className="flex items-center gap-1.5">
               {item.icon}
-              <span className="truncate">{item.val}</span>
+              <span className="truncate">
+                <EditableText fieldName={item.field} value={item.val} placeholder={item.ph} />
+              </span>
             </div>
           ))}
         </div>
@@ -370,7 +477,7 @@ export function LivePreview({ data }: LivePreviewProps) {
         {items.map((item, index) => (
           <span key={index} className="flex items-center gap-1">
             {item.icon}
-            {item.val}
+            <EditableText fieldName={item.field} value={item.val} placeholder={item.ph} />
           </span>
         ))}
       </div>
@@ -393,10 +500,10 @@ export function LivePreview({ data }: LivePreviewProps) {
             <div className="w-[30%] bg-slate-950 text-slate-300 p-6 flex flex-col gap-5 border-r border-slate-900">
               <div className="space-y-0.5">
                 <h2 className="text-base font-extrabold text-white tracking-tight leading-tight">
-                  {personalInfo?.fullName || 'Your Name'}
+                  <EditableText fieldName="personalInfo.fullName" value={personalInfo?.fullName || ''} placeholder="Your Name" />
                 </h2>
                 <p className="text-[9px] font-bold text-indigo-400 uppercase tracking-widest">
-                  {personalInfo?.title || 'Professional Title'}
+                  <EditableText fieldName="personalInfo.title" value={personalInfo?.title || ''} placeholder="Professional Title" />
                 </p>
               </div>
 
@@ -413,7 +520,9 @@ export function LivePreview({ data }: LivePreviewProps) {
                       <h5 className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">Technical</h5>
                       <div className="flex flex-wrap gap-1">
                         {skills.technicalSkills.map((sk, i) => (
-                          <span key={i} className="text-[9px] bg-slate-900 border border-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-medium">{sk}</span>
+                          <span key={i} className="text-[9px] bg-slate-900 border border-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-medium">
+                            <EditableText fieldName={`skills.technicalSkills.${i}`} value={sk} placeholder="Skill" />
+                          </span>
                         ))}
                       </div>
                     </div>
@@ -423,7 +532,9 @@ export function LivePreview({ data }: LivePreviewProps) {
                       <h5 className="text-[8px] font-bold text-slate-500 uppercase tracking-wider">Soft</h5>
                       <div className="flex flex-wrap gap-1">
                         {skills.softSkills.map((sk, i) => (
-                          <span key={i} className="text-[9px] bg-slate-900 border border-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-medium">{sk}</span>
+                          <span key={i} className="text-[9px] bg-slate-900 border border-slate-800 text-slate-300 px-1.5 py-0.5 rounded font-medium">
+                            <EditableText fieldName={`skills.softSkills.${i}`} value={sk} placeholder="Skill" />
+                          </span>
                         ))}
                       </div>
                     </div>
@@ -437,8 +548,15 @@ export function LivePreview({ data }: LivePreviewProps) {
                   <ul className="space-y-2 text-[9px] font-light">
                     {certificates.map((cert, idx) => (
                       <li key={cert.id || idx} className="space-y-0.5">
-                        <div className="font-bold text-white leading-tight">{cert.name}</div>
-                        <div className="text-slate-400 text-[8px]">{cert.issuer} ({cert.date})</div>
+                        <div className="font-bold text-white leading-tight">
+                          <EditableText fieldName={`certificates.${idx}.name`} value={cert.name} placeholder="Certificate name" />
+                        </div>
+                        <div className="text-slate-400 text-[8px]">
+                          <EditableText fieldName={`certificates.${idx}.issuer`} value={cert.issuer} placeholder="Issuer" />
+                          {" ("}
+                          <EditableText fieldName={`certificates.${idx}.date`} value={cert.date} placeholder="Date" />
+                          {")"}
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -481,18 +599,48 @@ export function LivePreview({ data }: LivePreviewProps) {
           <div className="p-10 flex flex-col gap-6">
             <div className="text-center border-b pb-4 border-indigo-200">
               <h1 className="text-3xl font-extrabold tracking-tight text-indigo-950 font-serif leading-tight">
-                {personalInfo?.fullName || 'Your Full Name'}
+                <EditableText fieldName="personalInfo.fullName" value={personalInfo?.fullName || ''} placeholder="Your Name" />
               </h1>
               <p className="text-[10px] font-bold text-indigo-600 mt-1 uppercase tracking-widest font-sans">
-                {personalInfo?.title || 'Professional Title'}
+                <EditableText fieldName="personalInfo.title" value={personalInfo?.title || ''} placeholder="Professional Title" />
               </p>
               <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-[10px] text-slate-500 font-sans">
-                {personalInfo?.email && <span className="flex items-center gap-1"><Mail className="w-3 h-3 text-indigo-400" />{personalInfo.email}</span>}
-                {personalInfo?.phone && <span className="flex items-center gap-1"><Phone className="w-3 h-3 text-indigo-400" />{personalInfo.phone}</span>}
-                {personalInfo?.location && <span className="flex items-center gap-1"><MapPin className="w-3 h-3 text-indigo-400" />{personalInfo.location}</span>}
-                {personalInfo?.linkedin && <span className="flex items-center gap-1"><Linkedin className="w-3 h-3 text-indigo-400" />{personalInfo.linkedin.replace(/^https?:\/\/(www\.)?/, '')}</span>}
-                {personalInfo?.github && <span className="flex items-center gap-1"><Github className="w-3 h-3 text-indigo-400" />{personalInfo.github.replace(/^https?:\/\/(www\.)?/, '')}</span>}
-                {personalInfo?.portfolio && <span className="flex items-center gap-1"><Globe className="w-3 h-3 text-indigo-400" />{personalInfo.portfolio.replace(/^https?:\/\/(www\.)?/, '')}</span>}
+                {personalInfo?.email && (
+                  <span className="flex items-center gap-1">
+                    <Mail className="w-3 h-3 text-indigo-400" />
+                    <EditableText fieldName="personalInfo.email" value={personalInfo.email} placeholder="Email" />
+                  </span>
+                )}
+                {personalInfo?.phone && (
+                  <span className="flex items-center gap-1">
+                    <Phone className="w-3 h-3 text-indigo-400" />
+                    <EditableText fieldName="personalInfo.phone" value={personalInfo.phone} placeholder="Phone" />
+                  </span>
+                )}
+                {personalInfo?.location && (
+                  <span className="flex items-center gap-1">
+                    <MapPin className="w-3 h-3 text-indigo-400" />
+                    <EditableText fieldName="personalInfo.location" value={personalInfo.location} placeholder="Location" />
+                  </span>
+                )}
+                {personalInfo?.linkedin && (
+                  <span className="flex items-center gap-1">
+                    <Linkedin className="w-3 h-3 text-indigo-400" />
+                    <EditableText fieldName="personalInfo.linkedin" value={personalInfo.linkedin} placeholder="LinkedIn" />
+                  </span>
+                )}
+                {personalInfo?.github && (
+                  <span className="flex items-center gap-1">
+                    <Github className="w-3 h-3 text-indigo-400" />
+                    <EditableText fieldName="personalInfo.github" value={personalInfo.github} placeholder="GitHub" />
+                  </span>
+                )}
+                {personalInfo?.portfolio && (
+                  <span className="flex items-center gap-1">
+                    <Globe className="w-3 h-3 text-indigo-400" />
+                    <EditableText fieldName="personalInfo.portfolio" value={personalInfo.portfolio} placeholder="Portfolio" />
+                  </span>
+                )}
               </div>
             </div>
 
@@ -526,10 +674,10 @@ export function LivePreview({ data }: LivePreviewProps) {
         <div className="p-10 flex flex-col gap-6">
           <div className="border-b-2 border-slate-950 pb-4">
             <h1 className="text-3xl font-black tracking-tight text-slate-900 leading-none">
-              {personalInfo?.fullName || 'Your Full Name'}
+              <EditableText fieldName="personalInfo.fullName" value={personalInfo?.fullName || ''} placeholder="Your Name" />
             </h1>
             <p className="text-xs font-bold text-indigo-600 mt-1.5 uppercase tracking-widest">
-              {personalInfo?.title || 'Professional Title'}
+              <EditableText fieldName="personalInfo.title" value={personalInfo?.title || ''} placeholder="Professional Title" />
             </p>
             {renderContactsList('inline')}
           </div>

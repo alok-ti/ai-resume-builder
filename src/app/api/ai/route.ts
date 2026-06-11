@@ -7,7 +7,9 @@ import {
   checkAtsScore,
   tailorResume,
   analyzeResume,
-  chatAssistant
+  chatAssistant,
+  rewriteInPlace,
+  quantifyAchievements
 } from '@/lib/gemini';
 
 export async function POST(request: Request) {
@@ -86,6 +88,24 @@ export async function POST(request: Request) {
       const { message = '', history = [], resumeData } = body;
       const response = await chatAssistant(message, history, resumeData);
       return NextResponse.json({ response });
+    }
+
+    // ==========================================
+    // 9. AI INLINE REWRITE ACTION
+    // ==========================================
+    if (action === 'rewrite-in-place') {
+      const { text = '', tone = 'general' } = body;
+      const responseText = await rewriteInPlace(text, tone);
+      return NextResponse.json({ text: responseText });
+    }
+
+    // ==========================================
+    // 10. AI ACHIEVEMENT QUANTIFICATION ACTION
+    // ==========================================
+    if (action === 'quantify') {
+      const { bullets = [] } = body;
+      const suggestions = await quantifyAchievements(bullets);
+      return NextResponse.json({ suggestions });
     }
 
     return NextResponse.json({ error: 'Invalid action parameter' }, { status: 400 });

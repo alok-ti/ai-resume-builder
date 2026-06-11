@@ -73,6 +73,19 @@ export function AIPanel() {
     tailoredBullets: Array<{ section: string; index: number; original: string; suggested: string }>;
   } | null>(null);
 
+  // Metrics Quantification
+  const [isQuantifyLoading, setIsQuantifyLoading] = useState(false);
+  const [quantifyError, setQuantifyError] = useState<string | null>(null);
+  const [quantifySuggestions, setQuantifySuggestions] = useState<Array<{
+    original: string;
+    suggestion: string;
+    metrics: string[];
+    expIndex: number;
+    bulletIndex: number;
+    companyName: string;
+    positionTitle: string;
+  }> | null>(null);
+
   // Cover Letter Generator
   const [coverLetterJobDescription, setCoverLetterJobDescription] = useState('');
   const [generatedCoverLetter, setGeneratedCoverLetter] = useState<string>('');
@@ -326,6 +339,99 @@ export function AIPanel() {
     }
   };
 
+  // Helper to extract plain-text bullet points from HTML
+  const extractBullets = (htmlDescription: string): string[] => {
+    if (!htmlDescription) return [];
+    // Find all <li>...</li> occurrences
+    const matches = htmlDescription.match(/<li[^>]*>([\s\S]*?)<\/li>/g);
+    if (matches) {
+      return matches.map(m => m.replace(/<[^>]*>/g, '').trim()).filter(Boolean);
+    }
+    // Fallback: strip tags and return as single item
+    const clean = htmlDescription.replace(/<[^>]*>/g, '').trim();
+    return clean ? [clean] : [];
+  };
+
+  const handleQuantify = async () => {
+    setIsQuantifyLoading(true);
+    setQuantifyError(null);
+    setQuantifySuggestions(null);
+    const loaderToastId = toast.loading('Analyzing achievements for quantification suggestions...');
+
+    try {
+      const values = getValues();
+      const experiences = values.workExperience || [];
+      const flatBullets: string[] = [];
+      const mapping: Array<{ expIndex: number; bulletIndex: number }> = [];
+
+      experiences.forEach((exp, expIdx) => {
+        const bullets = extractBullets(exp.description || '');
+        bullets.forEach((bullet, bulletIdx) => {
+          flatBullets.push(bullet);
+          mapping.push({ expIndex: expIdx, bulletIndex: bulletIdx });
+        });
+      });
+
+      if (flatBullets.length === 0) {
+        setQuantifySuggestions([]);
+        toast.dismiss(loaderToastId);
+        toast.info('No experience bullet points found to analyze.');
+        return;
+      }
+
+      const response = await fetch('/api/ai?action=quantify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bullets: flatBullets })
+      });
+
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+
+      const suggestionsWithMeta = (data.suggestions || []).map((s: any, idx: number) => {
+        const mapItem = mapping[idx];
+        return {
+          ...s,
+          expIndex: mapItem?.expIndex ?? -1,
+          bulletIndex: mapItem?.bulletIndex ?? -1,
+          companyName: mapItem ? (experiences[mapItem.expIndex]?.company || 'Experience') : 'Experience',
+          positionTitle: mapItem ? (experiences[mapItem.expIndex]?.position || 'Role') : 'Role'
+        };
+      }).filter((s: any) => s.expIndex !== -1);
+
+      setQuantifySuggestions(suggestionsWithMeta);
+      toast.dismiss(loaderToastId);
+      toast.success('Generated metric suggestions successfully!');
+    } catch (err: any) {
+      console.error(err);
+      setQuantifyError(err.message || 'Failed to suggest metrics.');
+      toast.dismiss(loaderToastId);
+      toast.error('Metrics analysis failed.');
+    } finally {
+      setIsQuantifyLoading(false);
+    }
+  };
+
+  const applyQuantifiedBullet = (expIndex: number, bulletIndex: number, suggestedText: string) => {
+    const values = getValues();
+    const exp = values.workExperience?.[expIndex];
+    if (!exp) return;
+
+    const rawDescription = exp.description || '';
+    const bullets = extractBullets(rawDescription);
+
+    if (bullets.length === 0) {
+      const formattedHtml = `<ul><li>${suggestedText}</li></ul>`;
+      setValue(`workExperience.${expIndex}.description`, formattedHtml, { shouldDirty: true, shouldTouch: true });
+    } else {
+      bullets[bulletIndex] = suggestedText;
+      const formattedHtml = `<ul>${bullets.map(b => `<li>${b}</li>`).join('')}</ul>`;
+      setValue(`workExperience.${expIndex}.description`, formattedHtml, { shouldDirty: true, shouldTouch: true });
+    }
+
+    toast.success(`Applied metric suggestion to item #${expIndex + 1}!`);
+  };
+
   // F. Chat Assistant
   const handleSendChatMessage = async () => {
     if (!chatInput.trim() || isChatLoading) return;
@@ -566,6 +672,88 @@ export function AIPanel() {
                 </div>
               )}
             </div>
+
+            {/* Metrics Optimization / Quantification suggestions */}
+            <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <TrendingUp className="w-4 h-4 text-indigo-400" />
+                Metrics Optimization
+              </h4>
+              <p className="text-[10px] text-slate-400 leading-relaxed font-light">
+                Analyzes your experience descriptions and suggests metric-focused improvements (e.g. percentages, scale, dollar amounts).
+              </p>
+              
+              {!quantifySuggestions ? (
+                <button
+                  type="button"
+                  onClick={handleQuantify}
+                  disabled={isQuantifyLoading}
+                  className="w-full flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-slate-300 bg-slate-900/60 border border-slate-800 hover:bg-slate-800 rounded-xl disabled:opacity-50 transition-all cursor-pointer animate-fade-in"
+                >
+                  {isQuantifyLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TrendingUp className="w-3.5 h-3.5 text-indigo-400" />}
+                  Analyze Achievements for Metrics
+                </button>
+              ) : (
+                <div className="space-y-3.5 pt-1 animate-fade-in">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[9px] uppercase font-black tracking-widest text-indigo-400">Quantification suggestions:</span>
+                    <button
+                      type="button"
+                      onClick={() => setQuantifySuggestions(null)}
+                      className="text-slate-500 hover:text-white transition-colors"
+                      title="Clear Suggestions"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {quantifySuggestions.length === 0 ? (
+                    <p className="text-[10px] text-slate-400 italic font-light">No achievements found to analyze. Add bullet points under Work Experience first.</p>
+                  ) : (
+                    <div className="space-y-3 max-h-[350px] overflow-y-auto pr-1">
+                      {quantifySuggestions.map((item, idx) => (
+                        <div key={idx} className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-2 text-[10px] hover:border-indigo-500/30 transition-colors">
+                          <div className="flex justify-between items-start gap-2 border-b border-slate-900 pb-1.5">
+                            <div>
+                              <span className="text-[8px] font-black text-slate-500 uppercase">
+                                {item.companyName} — {item.positionTitle}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => applyQuantifiedBullet(item.expIndex, item.bulletIndex, item.suggestion)}
+                              className="text-[8px] font-bold text-white bg-indigo-600 hover:bg-indigo-500 px-2 py-0.5 rounded transition-all cursor-pointer select-none shrink-0"
+                            >
+                              Apply Suggestion
+                            </button>
+                          </div>
+                          
+                          <div className="space-y-1">
+                            <p className="text-slate-505 italic"><span className="font-semibold text-slate-600">Original:</span> &quot;{item.original}&quot;</p>
+                            <p className="text-slate-300 font-light"><span className="font-semibold text-indigo-400">Suggestion:</span> &quot;{item.suggestion}&quot;</p>
+                          </div>
+
+                          {item.metrics && item.metrics.length > 0 && (
+                            <div className="pt-1.5 border-t border-slate-900/60">
+                              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wide">Suggested Metrics:</span>
+                              <ul className="list-disc pl-3 text-[9px] text-slate-400 space-y-0.5 mt-1 font-light">
+                                {item.metrics.map((m, mIdx) => (
+                                  <li key={mIdx}>{m}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {quantifyError && (
+                <p className="text-rose-400 text-[10px] font-medium flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> {quantifyError}</p>
+              )}
+            </div>
           </div>
         )}
 
@@ -645,9 +833,16 @@ export function AIPanel() {
                     </h5>
                     <div className="flex flex-wrap gap-1.5 pt-0.5">
                       {atsResult.missingKeywords.map((word, i) => (
-                        <span key={i} className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 font-semibold">
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => addSkillToResume('technical', word)}
+                          className="group flex items-center gap-1 text-[9px] px-2.5 py-1 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 hover:border-rose-500/50 hover:bg-rose-500/20 transition-all font-semibold cursor-pointer"
+                          title={`Add '${word}' to technical skills`}
+                        >
                           {word}
-                        </span>
+                          <Plus className="w-2.5 h-2.5 text-rose-500/70 group-hover:text-rose-400 transition-colors" />
+                        </button>
                       ))}
                     </div>
                   </div>

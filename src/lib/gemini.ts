@@ -438,3 +438,97 @@ What specific section or issue would you like to refine next?`;
   const result = await model.generateContent(chatContextPrompt);
   return result.response.text().trim();
 }
+
+/**
+ * Direct Inline Text Rewrite & Improve
+ */
+export async function rewriteInPlace(text: string, tone: string): Promise<string> {
+  if (!apiKey) {
+    console.warn("GEMINI_API_KEY is not configured. Running in Mock Mode for rewrite in place.");
+    const cleanText = text.replace(/<[^>]*>/g, '').trim() || 'worked on feature development';
+    
+    if (tone === 'technical') {
+      return `Spearheaded software architecture and technical optimizations for ${cleanText}, successfully improving backend throughput by 35% and reducing API response latency.`;
+    }
+    if (tone === 'leadership') {
+      return `Spearheaded and directed cross-functional team efforts executing ${cleanText}, boosting workflow velocity by 25% and delivering project milestones 2 weeks ahead of schedule.`;
+    }
+    if (tone === 'shorten') {
+      return `Optimized and streamlined ${cleanText} to reduce technical debt.`;
+    }
+    // general improve
+    return `Designed, architected, and deployed critical updates for ${cleanText}, leading to a 30% increase in system efficiency and enhancing overall user retention metrics.`;
+  }
+
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  let toneGuideline = '';
+  if (tone === 'technical') {
+    toneGuideline = 'Make it highly technical, focus on architectures, systems, frameworks, and engineering concepts.';
+  } else if (tone === 'leadership') {
+    toneGuideline = 'Focus on leadership, ownership, mentoring, cross-functional collaboration, and business value.';
+  } else if (tone === 'shorten') {
+    toneGuideline = 'Keep it concise, punchy, and short without losing key accomplishments.';
+  } else {
+    toneGuideline = 'Improve clarity, use active impact verbs, and format as a strong STAR action-oriented statement.';
+  }
+
+  const prompt = `
+    Act as an expert resume copywriter. Rewrite the following text to improve it based on this guideline: "${toneGuideline}".
+    
+    Current Text: "${text}"
+    
+    Important Constraints:
+    - If the input is a single bullet point or short sentence, return exactly one improved bullet point or sentence.
+    - Do NOT wrap in markdown block code quotes or add introductory text. Return ONLY the raw improved text.
+  `;
+
+  const result = await model.generateContent(prompt);
+  return result.response.text().trim();
+}
+
+/**
+ * Suggest quantification ideas for experience bullets
+ */
+export async function quantifyAchievements(bullets: string[]): Promise<Array<{ original: string; suggestion: string; metrics: string[] }>> {
+  if (!apiKey) {
+    console.warn("GEMINI_API_KEY is not configured. Running in Mock Mode for quantification suggestions.");
+    return bullets.map(b => {
+      const clean = b.replace(/<[^>]*>/g, '').trim();
+      return {
+        original: clean,
+        suggestion: `Successfully executed ${clean}, resulting in a [insert % e.g., 25%] performance optimization and saving [insert hours e.g., 10 hours/week] of developer toil.`,
+        metrics: ["Percentage increase/decrease (e.g. 30% faster, 20% cost reduction)", "Scale metrics (e.g. 15+ microservices, 50,000+ active users)", "Time/Money metrics (e.g. $15k saved, 3 weeks ahead of schedule)"]
+      };
+    });
+  }
+
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const prompt = `
+    Act as a professional resume editor. Analyze the following list of resume statements and suggest specific ways the job seeker can quantify their achievements by adding metrics, numbers, or percentages.
+    
+    Statements:
+    ${JSON.stringify(bullets)}
+    
+    For each statement, provide a list of relevant metrics they could add, and a template suggestion illustrating how the statement would read with those metrics.
+    Format your response as a JSON array of objects:
+    [
+      {
+        "original": "Original statement",
+        "suggestion": "Template suggestion with placeholders like [insert %] or [insert value]",
+        "metrics": ["Specific suggestion 1 (e.g. % performance improvement)", "Specific suggestion 2"]
+      }
+    ]
+    Return ONLY the raw JSON array. Do not wrap in markdown code tags.
+  `;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const outputText = result.response.text().trim();
+    const cleanJson = outputText.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (err) {
+    console.error('Failed to parse quantification from AI, falling back to empty suggestions', err);
+    return [];
+  }
+}
+

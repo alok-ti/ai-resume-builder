@@ -6,7 +6,7 @@ import { ResumeValues } from '@/types/resume-schema';
 import { 
   Plus, Trash2, Mail, Phone, MapPin, Type, Briefcase, 
   GraduationCap, Code, Globe, Award, Trophy, FolderGit2,
-  ChevronDown, ChevronUp, GripVertical, Sparkles
+  ChevronDown, ChevronUp, GripVertical, Sparkles, Loader2
 } from 'lucide-react';
 import { LinkedinIcon as Linkedin, GithubIcon as Github } from '@/components/shared/icons';
 import { RichTextEditor } from '@/components/ui/rich-text-editor';
@@ -64,6 +64,82 @@ function SortableItem({ id, children }: SortableItemProps) {
         <GripVertical className="w-4 h-4" />
       </div>
       {children}
+    </div>
+  );
+}
+
+import { useToast } from '@/components/ui/toast';
+
+interface InlineAiButtonProps {
+  fieldName: string;
+  currentValue: string;
+  tone?: 'technical' | 'leadership' | 'shorten' | 'improve';
+  label?: string;
+}
+
+export function InlineAiButton({ fieldName, currentValue, tone = 'improve', label }: InlineAiButtonProps) {
+  const { setValue } = useFormContext<ResumeValues>();
+  const toast = useToast();
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleRewrite = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Strip HTML tags to evaluate text length
+    const cleanText = currentValue ? currentValue.replace(/<[^>]*>/g, '').trim() : '';
+    if (!cleanText) {
+      toast.error('Please enter some text first for the AI to polish.');
+      return;
+    }
+
+    setIsLoading(true);
+    const toastId = toast.loading('AI is polishing this section...');
+    try {
+      const response = await fetch('/api/ai?action=rewrite-in-place', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: currentValue, tone }),
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+
+      // Format work experience bullet point as list items if it's rich text
+      let newText = data.text;
+      if (fieldName.endsWith('.description') && fieldName.includes('workExperience')) {
+        if (!newText.startsWith('<ul>') && !newText.startsWith('<li>')) {
+          newText = `<ul><li>${newText.replace(/^[•\-\s]+/, '')}</li></ul>`;
+        }
+      }
+      
+      setValue(fieldName as any, newText, { shouldDirty: true, shouldTouch: true });
+      toast.dismiss(toastId);
+      toast.success('Text polished successfully!');
+    } catch (err: any) {
+      console.error(err);
+      toast.dismiss(toastId);
+      toast.error('AI Rewrite failed. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex gap-1 items-center select-none shrink-0">
+      <button
+        type="button"
+        onClick={handleRewrite}
+        disabled={isLoading}
+        className="flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded hover:bg-indigo-500/20 transition-all cursor-pointer disabled:opacity-40"
+        title={`Polish as ${tone} with AI`}
+      >
+        {isLoading ? (
+          <Loader2 className="w-2.5 h-2.5 animate-spin" />
+        ) : (
+          <Sparkles className="w-2.5 h-2.5 text-indigo-400" />
+        )}
+        {label || 'AI Improve'}
+      </button>
     </div>
   );
 }
@@ -197,7 +273,8 @@ export function PersonalInfoForm() {
    1B. SUMMARY FORM
    ========================================================================== */
 export function SummaryForm() {
-  const { register } = useFormContext<ResumeValues>();
+  const { register, watch } = useFormContext<ResumeValues>();
+  const summaryVal = watch('personalInfo.summary') || '';
 
   return (
     <div className="bg-slate-900/30 border border-slate-800/80 rounded-2xl p-6 space-y-6 backdrop-blur-md">
@@ -206,9 +283,16 @@ export function SummaryForm() {
         <h3 className="text-lg font-bold text-white tracking-tight">Professional Summary</h3>
       </div>
       <div className="space-y-2">
-        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-          Summarize your background and key achievements
-        </label>
+        <div className="flex justify-between items-center mb-1">
+          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+            Summarize your background and key achievements
+          </label>
+          <div className="flex gap-1.5">
+            <InlineAiButton fieldName="personalInfo.summary" currentValue={summaryVal} tone="improve" label="AI Improve" />
+            <InlineAiButton fieldName="personalInfo.summary" currentValue={summaryVal} tone="technical" label="AI Technical" />
+            <InlineAiButton fieldName="personalInfo.summary" currentValue={summaryVal} tone="shorten" label="AI Shorten" />
+          </div>
+        </div>
         <textarea
           {...register('personalInfo.summary')}
           rows={6}
@@ -413,7 +497,13 @@ export function ExperienceForm() {
                           </div>
 
                           <div className="space-y-1.5">
-                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Description & Highlights</label>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Description & Highlights</label>
+                              <div className="flex gap-1.5">
+                                <InlineAiButton fieldName={`workExperience.${index}.description`} currentValue={watch(`workExperience.${index}.description`) || ''} tone="improve" label="AI Improve" />
+                                <InlineAiButton fieldName={`workExperience.${index}.description`} currentValue={watch(`workExperience.${index}.description`) || ''} tone="technical" label="AI Technical" />
+                              </div>
+                            </div>
                             <Controller
                               name={`workExperience.${index}.description`}
                               control={control}
@@ -441,17 +531,45 @@ export function ExperienceForm() {
   );
 }
 
+
 /* ==========================================================================
    3. EDUCATION FORM
    ========================================================================== */
 export function EducationForm() {
   const { control, register, watch, formState: { errors } } = useFormContext<ResumeValues>();
-  const { fields, append, remove } = useFieldArray({
+  const { fields, append, remove, move } = useFieldArray({
     control,
     name: 'education',
   });
 
   const [expandedIndex, setExpandedIndex] = useState<number | null>(fields.length > 0 ? 0 : null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = fields.findIndex((f) => f.id === active.id);
+      const newIndex = fields.findIndex((f) => f.id === over.id);
+      move(oldIndex, newIndex);
+      
+      if (expandedIndex === oldIndex) {
+        setExpandedIndex(newIndex);
+      } else if (expandedIndex !== null) {
+        if (oldIndex < expandedIndex && newIndex >= expandedIndex) {
+          setExpandedIndex(expandedIndex - 1);
+        } else if (oldIndex > expandedIndex && newIndex <= expandedIndex) {
+          setExpandedIndex(expandedIndex + 1);
+        }
+      }
+    }
+  };
 
   const handleAppend = () => {
     append({ id: Math.random().toString(), school: '', degree: '', fieldOfStudy: '', location: '', startDate: '', endDate: '', current: false, description: '' });
@@ -478,116 +596,125 @@ export function EducationForm() {
       {fields.length === 0 ? (
         <p className="text-xs text-slate-500 italic text-center py-8">No education items added yet.</p>
       ) : (
-        <div className="space-y-3">
-          {fields.map((field, index) => {
-            const isExpanded = expandedIndex === index;
-            const degree = watch(`education.${index}.degree`) || '';
-            const school = watch(`education.${index}.school`) || '';
-            const titleText = degree && school 
-              ? `${degree} from ${school}`
-              : degree || school || `School / Degree #${index + 1}`;
+        <DndContext 
+          sensors={sensors} 
+          collisionDetection={closestCenter} 
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-3">
+              {fields.map((field, index) => {
+                const isExpanded = expandedIndex === index;
+                const degree = watch(`education.${index}.degree`) || '';
+                const school = watch(`education.${index}.school`) || '';
+                const titleText = degree && school 
+                  ? `${degree} from ${school}`
+                  : degree || school || `School / Degree #${index + 1}`;
 
-            return (
-              <div 
-                key={field.id}
-                className={`border rounded-xl transition-all overflow-hidden ${
-                  isExpanded 
-                    ? 'bg-slate-950/70 border-indigo-500/50 shadow-lg' 
-                    : 'bg-slate-950/40 border-slate-800/80 hover:bg-slate-950/60 hover:border-slate-700/80'
-                }`}
-              >
-                {/* Accordion Header */}
-                <div 
-                  className="flex items-center justify-between px-5 py-4 cursor-pointer select-none"
-                  onClick={() => setExpandedIndex(isExpanded ? null : index)}
-                >
-                  <div className="flex-grow flex items-center justify-between">
-                    <span className={`text-xs font-bold ${isExpanded ? 'text-indigo-400' : 'text-slate-300'}`}>
-                      {titleText}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 font-medium font-mono hidden sm:inline">
-                        {watch(`education.${index}.startDate`)} – {watch(`education.${index}.endDate`)}
-                      </span>
-                      {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      remove(index);
-                      if (expandedIndex === index) setExpandedIndex(null);
-                    }}
-                    className="ml-4 text-slate-500 hover:text-rose-400 transition-colors p-1"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {/* Expanded Fields */}
-                {isExpanded && (
-                  <div className="p-5 border-t border-slate-800/60 space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">School / University</label>
-                        <input
-                          {...register(`education.${index}.school`)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                          placeholder="Stanford University"
-                        />
-                        {errors.education?.[index]?.school && (
-                          <p className="text-red-400 text-xxs font-medium mt-1">{errors.education[index].school.message}</p>
-                        )}
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Degree / Certificate</label>
-                        <input
-                          {...register(`education.${index}.degree`)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                          placeholder="Bachelor of Science"
-                        />
-                        {errors.education?.[index]?.degree && (
-                          <p className="text-red-400 text-xxs font-medium mt-1">{errors.education[index].degree.message}</p>
-                        )}
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Field of Study</label>
-                        <input
-                          {...register(`education.${index}.fieldOfStudy`)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                          placeholder="Computer Science"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Start Date</label>
-                          <input
-                            {...register(`education.${index}.startDate`)}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                            placeholder="Sep 2020"
-                          />
+                return (
+                  <SortableItem key={field.id} id={field.id}>
+                    <div 
+                      className={`border rounded-xl transition-all overflow-hidden ${
+                        isExpanded 
+                          ? 'bg-slate-950/70 border-indigo-500/50 shadow-lg' 
+                          : 'bg-slate-950/40 border-slate-800/80 hover:bg-slate-950/60 hover:border-slate-700/80'
+                      }`}
+                    >
+                      {/* Accordion Header */}
+                      <div 
+                        className="flex items-center justify-between px-5 py-4 cursor-pointer select-none pl-11"
+                        onClick={() => setExpandedIndex(isExpanded ? null : index)}
+                      >
+                        <div className="flex-grow flex items-center justify-between">
+                          <span className={`text-xs font-bold ${isExpanded ? 'text-indigo-400' : 'text-slate-300'}`}>
+                            {titleText}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-500 font-medium font-mono hidden sm:inline">
+                              {watch(`education.${index}.startDate`)} – {watch(`education.${index}.endDate`)}
+                            </span>
+                            {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                          </div>
                         </div>
-                        <div className="space-y-1">
-                          <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">End Date</label>
-                          <input
-                            {...register(`education.${index}.endDate`)}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                            placeholder="June 2024"
-                          />
-                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remove(index);
+                            if (expandedIndex === index) setExpandedIndex(null);
+                          }}
+                          className="ml-4 text-slate-500 hover:text-rose-400 transition-colors p-1"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </div>
+
+                      {/* Expanded Fields */}
+                      {isExpanded && (
+                        <div className="p-5 border-t border-slate-800/60 space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">School / University</label>
+                              <input
+                                {...register(`education.${index}.school`)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="Stanford University"
+                              />
+                              {errors.education?.[index]?.school && (
+                                <p className="text-red-400 text-xxs font-medium mt-1">{errors.education[index].school.message}</p>
+                              )}
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Degree / Certificate</label>
+                              <input
+                                {...register(`education.${index}.degree`)}
+                                className="w-full bg-slate-950 border border-slate-850 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="Bachelor of Science"
+                              />
+                              {errors.education?.[index]?.degree && (
+                                <p className="text-red-400 text-xxs font-medium mt-1">{errors.education[index].degree.message}</p>
+                              )}
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Field of Study</label>
+                              <input
+                                {...register(`education.${index}.fieldOfStudy`)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="Computer Science"
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="space-y-1">
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Start Date</label>
+                                <input
+                                  {...register(`education.${index}.startDate`)}
+                                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                  placeholder="Sep 2020"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">End Date</label>
+                                <input
+                                  {...register(`education.${index}.endDate`)}
+                                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                  placeholder="June 2024"
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  </SortableItem>
+                );
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
     </div>
   );
@@ -762,7 +889,13 @@ export function ProjectsForm() {
                           </div>
 
                           <div className="space-y-1.5">
-                            <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Project Description</label>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Project Description</label>
+                              <div className="flex gap-1.5">
+                                <InlineAiButton fieldName={`projects.${index}.description`} currentValue={watch(`projects.${index}.description`) || ''} tone="improve" label="AI Improve" />
+                                <InlineAiButton fieldName={`projects.${index}.description`} currentValue={watch(`projects.${index}.description`) || ''} tone="technical" label="AI Technical" />
+                              </div>
+                            </div>
                             <Controller
                               name={`projects.${index}.description`}
                               control={control}
@@ -856,12 +989,39 @@ export function SkillsForm() {
    ========================================================================== */
 export function CertificatesForm() {
   const { control, register, watch, formState: { errors } } = useFormContext<ResumeValues>();
-  const { fields, append, remove } = useFieldArray({
+  const { fields, append, remove, move } = useFieldArray({
     control,
     name: 'certificates',
   });
 
   const [expandedIndex, setExpandedIndex] = useState<number | null>(fields.length > 0 ? 0 : null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = fields.findIndex((f) => f.id === active.id);
+      const newIndex = fields.findIndex((f) => f.id === over.id);
+      move(oldIndex, newIndex);
+      
+      if (expandedIndex === oldIndex) {
+        setExpandedIndex(newIndex);
+      } else if (expandedIndex !== null) {
+        if (oldIndex < expandedIndex && newIndex >= expandedIndex) {
+          setExpandedIndex(expandedIndex - 1);
+        } else if (oldIndex > expandedIndex && newIndex <= expandedIndex) {
+          setExpandedIndex(expandedIndex + 1);
+        }
+      }
+    }
+  };
 
   const handleAppend = () => {
     append({ id: Math.random().toString(), name: '', issuer: '', date: '', url: '' });
@@ -888,100 +1048,109 @@ export function CertificatesForm() {
       {fields.length === 0 ? (
         <p className="text-xs text-slate-500 italic text-center py-8">No certifications added yet.</p>
       ) : (
-        <div className="space-y-3">
-          {fields.map((field, index) => {
-            const isExpanded = expandedIndex === index;
-            const certName = watch(`certificates.${index}.name`) || '';
-            const titleText = certName || `Certification #${index + 1}`;
+        <DndContext 
+          sensors={sensors} 
+          collisionDetection={closestCenter} 
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-3">
+              {fields.map((field, index) => {
+                const isExpanded = expandedIndex === index;
+                const certName = watch(`certificates.${index}.name`) || '';
+                const titleText = certName || `Certification #${index + 1}`;
 
-            return (
-              <div 
-                key={field.id}
-                className={`border rounded-xl transition-all overflow-hidden ${
-                  isExpanded 
-                    ? 'bg-slate-950/70 border-indigo-500/50 shadow-lg' 
-                    : 'bg-slate-950/40 border-slate-800/80 hover:bg-slate-950/60 hover:border-slate-700/80'
-                }`}
-              >
-                {/* Accordion Header */}
-                <div 
-                  className="flex items-center justify-between px-5 py-4 cursor-pointer select-none"
-                  onClick={() => setExpandedIndex(isExpanded ? null : index)}
-                >
-                  <div className="flex-grow flex items-center justify-between">
-                    <span className={`text-xs font-bold ${isExpanded ? 'text-indigo-400' : 'text-slate-300'}`}>
-                      {titleText}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 font-medium font-mono hidden sm:inline">
-                        {watch(`certificates.${index}.date`)}
-                      </span>
-                      {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                return (
+                  <SortableItem key={field.id} id={field.id}>
+                    <div 
+                      className={`border rounded-xl transition-all overflow-hidden ${
+                        isExpanded 
+                          ? 'bg-slate-950/70 border-indigo-500/50 shadow-lg' 
+                          : 'bg-slate-950/40 border-slate-800/80 hover:bg-slate-950/60 hover:border-slate-700/80'
+                      }`}
+                    >
+                      {/* Accordion Header */}
+                      <div 
+                        className="flex items-center justify-between px-5 py-4 cursor-pointer select-none pl-11"
+                        onClick={() => setExpandedIndex(isExpanded ? null : index)}
+                      >
+                        <div className="flex-grow flex items-center justify-between">
+                          <span className={`text-xs font-bold ${isExpanded ? 'text-indigo-400' : 'text-slate-300'}`}>
+                            {titleText}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-500 font-medium font-mono hidden sm:inline">
+                              {watch(`certificates.${index}.date`)}
+                            </span>
+                            {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remove(index);
+                            if (expandedIndex === index) setExpandedIndex(null);
+                          }}
+                          className="ml-4 text-slate-500 hover:text-rose-400 transition-colors p-1"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Expanded fields */}
+                      {isExpanded && (
+                        <div className="p-5 border-t border-slate-800/60 space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Certification Name</label>
+                              <input
+                                {...register(`certificates.${index}.name`)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="AWS Certified Solutions Architect"
+                              />
+                              {errors.certificates?.[index]?.name && (
+                                <p className="text-red-400 text-xxs font-medium mt-1">{errors.certificates[index].name.message}</p>
+                              )}
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Issuer Name</label>
+                              <input
+                                {...register(`certificates.${index}.issuer`)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="Amazon Web Services"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Issue Date</label>
+                              <input
+                                {...register(`certificates.${index}.date`)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="June 2024"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Verification URL</label>
+                              <input
+                                {...register(`certificates.${index}.url`)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="https://credly.com/..."
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      remove(index);
-                      if (expandedIndex === index) setExpandedIndex(null);
-                    }}
-                    className="ml-4 text-slate-500 hover:text-rose-400 transition-colors p-1"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {/* Expanded fields */}
-                {isExpanded && (
-                  <div className="p-5 border-t border-slate-800/60 space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Certification Name</label>
-                        <input
-                          {...register(`certificates.${index}.name`)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                          placeholder="AWS Certified Solutions Architect"
-                        />
-                        {errors.certificates?.[index]?.name && (
-                          <p className="text-red-400 text-xxs font-medium mt-1">{errors.certificates[index].name.message}</p>
-                        )}
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Issuer Name</label>
-                        <input
-                          {...register(`certificates.${index}.issuer`)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                          placeholder="Amazon Web Services"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Issue Date</label>
-                        <input
-                          {...register(`certificates.${index}.date`)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                          placeholder="June 2024"
-                        />
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Verification URL</label>
-                        <input
-                          {...register(`certificates.${index}.url`)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                          placeholder="https://credly.com/..."
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  </SortableItem>
+                );
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
     </div>
   );
@@ -992,12 +1161,39 @@ export function CertificatesForm() {
    ========================================================================== */
 export function AchievementsForm() {
   const { control, register, watch, formState: { errors } } = useFormContext<ResumeValues>();
-  const { fields, append, remove } = useFieldArray({
+  const { fields, append, remove, move } = useFieldArray({
     control,
     name: 'achievements',
   });
 
   const [expandedIndex, setExpandedIndex] = useState<number | null>(fields.length > 0 ? 0 : null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = fields.findIndex((f) => f.id === active.id);
+      const newIndex = fields.findIndex((f) => f.id === over.id);
+      move(oldIndex, newIndex);
+      
+      if (expandedIndex === oldIndex) {
+        setExpandedIndex(newIndex);
+      } else if (expandedIndex !== null) {
+        if (oldIndex < expandedIndex && newIndex >= expandedIndex) {
+          setExpandedIndex(expandedIndex - 1);
+        } else if (oldIndex > expandedIndex && newIndex <= expandedIndex) {
+          setExpandedIndex(expandedIndex + 1);
+        }
+      }
+    }
+  };
 
   const handleAppend = () => {
     append({ id: Math.random().toString(), title: '', date: '', description: '' });
@@ -1024,93 +1220,292 @@ export function AchievementsForm() {
       {fields.length === 0 ? (
         <p className="text-xs text-slate-500 italic text-center py-8">No achievements added yet.</p>
       ) : (
-        <div className="space-y-3">
-          {fields.map((field, index) => {
-            const isExpanded = expandedIndex === index;
-            const achTitle = watch(`achievements.${index}.title`) || '';
-            const titleText = achTitle || `Achievement #${index + 1}`;
+        <DndContext 
+          sensors={sensors} 
+          collisionDetection={closestCenter} 
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-3">
+              {fields.map((field, index) => {
+                const isExpanded = expandedIndex === index;
+                const achTitle = watch(`achievements.${index}.title`) || '';
+                const titleText = achTitle || `Achievement #${index + 1}`;
 
-            return (
-              <div 
-                key={field.id}
-                className={`border rounded-xl transition-all overflow-hidden ${
-                  isExpanded 
-                    ? 'bg-slate-950/70 border-indigo-500/50 shadow-lg' 
-                    : 'bg-slate-950/40 border-slate-800/80 hover:bg-slate-950/60 hover:border-slate-700/80'
-                }`}
-              >
-                {/* Accordion Header */}
-                <div 
-                  className="flex items-center justify-between px-5 py-4 cursor-pointer select-none"
-                  onClick={() => setExpandedIndex(isExpanded ? null : index)}
-                >
-                  <div className="flex-grow flex items-center justify-between">
-                    <span className={`text-xs font-bold ${isExpanded ? 'text-indigo-400' : 'text-slate-300'}`}>
-                      {titleText}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] text-slate-500 font-medium font-mono hidden sm:inline">
-                        {watch(`achievements.${index}.date`)}
-                      </span>
-                      {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                return (
+                  <SortableItem key={field.id} id={field.id}>
+                    <div 
+                      className={`border rounded-xl transition-all overflow-hidden ${
+                        isExpanded 
+                          ? 'bg-slate-950/70 border-indigo-500/50 shadow-lg' 
+                          : 'bg-slate-950/40 border-slate-800/80 hover:bg-slate-950/60 hover:border-slate-700/80'
+                      }`}
+                    >
+                      {/* Accordion Header */}
+                      <div 
+                        className="flex items-center justify-between px-5 py-4 cursor-pointer select-none pl-11"
+                        onClick={() => setExpandedIndex(isExpanded ? null : index)}
+                      >
+                        <div className="flex-grow flex items-center justify-between">
+                          <span className={`text-xs font-bold ${isExpanded ? 'text-indigo-400' : 'text-slate-300'}`}>
+                            {titleText}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-500 font-medium font-mono hidden sm:inline">
+                              {watch(`achievements.${index}.date`)}
+                            </span>
+                            {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remove(index);
+                            if (expandedIndex === index) setExpandedIndex(null);
+                          }}
+                          className="ml-4 text-slate-500 hover:text-rose-400 transition-colors p-1"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Expanded Fields */}
+                      {isExpanded && (
+                        <div className="p-5 border-t border-slate-800/60 space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="md:col-span-2 space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Achievement Title</label>
+                              <input
+                                {...register(`achievements.${index}.title`)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="Won 1st Place at TechCrunch Hackathon"
+                              />
+                              {errors.achievements?.[index]?.title && (
+                                <p className="text-red-400 text-xxs font-medium mt-1">{errors.achievements[index].title.message}</p>
+                              )}
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date Achieved</label>
+                              <input
+                                {...register(`achievements.${index}.date`)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="March 2025"
+                              />
+                            </div>
+
+                            <div className="md:col-span-2 space-y-1">
+                              <div className="flex justify-between items-center mb-1">
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Description</label>
+                                <InlineAiButton fieldName={`achievements.${index}.description`} currentValue={watch(`achievements.${index}.description`) || ''} tone="improve" label="AI Improve" />
+                              </div>
+                              <textarea
+                                {...register(`achievements.${index}.description`)}
+                                rows={3}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600 leading-relaxed"
+                                placeholder="Briefly describe the achievement, award, or scope..."
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      remove(index);
-                      if (expandedIndex === index) setExpandedIndex(null);
-                    }}
-                    className="ml-4 text-slate-500 hover:text-rose-400 transition-colors p-1"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {/* Expanded Fields */}
-                {isExpanded && (
-                  <div className="p-5 border-t border-slate-800/60 space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="md:col-span-2 space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Achievement Title</label>
-                        <input
-                          {...register(`achievements.${index}.title`)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                          placeholder="Won 1st Place at TechCrunch Hackathon"
-                        />
-                        {errors.achievements?.[index]?.title && (
-                          <p className="text-red-400 text-xxs font-medium mt-1">{errors.achievements[index].title.message}</p>
-                        )}
-                      </div>
-
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date Achieved</label>
-                        <input
-                          {...register(`achievements.${index}.date`)}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
-                          placeholder="March 2025"
-                        />
-                      </div>
-
-                      <div className="md:col-span-2 space-y-1">
-                        <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Description</label>
-                        <textarea
-                          {...register(`achievements.${index}.description`)}
-                          rows={3}
-                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600 leading-relaxed"
-                          placeholder="Briefly describe the achievement, award, or scope..."
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+                  </SortableItem>
+                );
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
       )}
     </div>
   );
 }
+
+/* ==========================================================================
+   8. CUSTOM SECTIONS FORM
+   ========================================================================== */
+interface CustomSectionFormProps {
+  sectionId: string;
+}
+
+export function CustomSectionForm({ sectionId }: CustomSectionFormProps) {
+  const { control, register, watch } = useFormContext<ResumeValues>();
+  const { fields, append, remove, move } = useFieldArray({
+    control,
+    name: `customSections.${sectionId}.items` as any,
+  });
+
+  const [expandedIndex, setExpandedIndex] = useState<number | null>(fields.length > 0 ? 0 : null);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    })
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (over && active.id !== over.id) {
+      const oldIndex = fields.findIndex((f) => f.id === active.id);
+      const newIndex = fields.findIndex((f) => f.id === over.id);
+      move(oldIndex, newIndex);
+      
+      if (expandedIndex === oldIndex) {
+        setExpandedIndex(newIndex);
+      } else if (expandedIndex !== null) {
+        if (oldIndex < expandedIndex && newIndex >= expandedIndex) {
+          setExpandedIndex(expandedIndex - 1);
+        } else if (oldIndex > expandedIndex && newIndex <= expandedIndex) {
+          setExpandedIndex(expandedIndex + 1);
+        }
+      }
+    }
+  };
+
+  const handleAppend = () => {
+    append({ id: Math.random().toString(), title: '', subtitle: '', date: '', description: '' } as any);
+    setExpandedIndex(fields.length);
+  };
+
+  return (
+    <div className="bg-slate-900/30 border border-slate-800/80 rounded-2xl p-6 space-y-6 backdrop-blur-md">
+      <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div className="flex items-center gap-2 flex-grow">
+          <Sparkles className="w-5 h-5 text-indigo-400" />
+          <input
+            {...register(`customSections.${sectionId}.title` as any)}
+            className="bg-transparent text-lg font-bold text-white border-b border-transparent hover:border-slate-800 focus:border-indigo-500 focus:outline-none px-1 py-0.5 w-full max-w-[280px]"
+            placeholder="Custom Section Title"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={handleAppend}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 shrink-0"
+        >
+          <Plus className="w-3.5 h-3.5" />
+          Add Item
+        </button>
+      </div>
+
+      {fields.length === 0 ? (
+        <p className="text-xs text-slate-500 italic text-center py-8">No items added yet.</p>
+      ) : (
+        <DndContext 
+          sensors={sensors} 
+          collisionDetection={closestCenter} 
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={fields.map(f => f.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-3">
+              {fields.map((field, index) => {
+                const isExpanded = expandedIndex === index;
+                const itemTitle = watch(`customSections.${sectionId}.items.${index}.title` as any) || '';
+                const titleText = itemTitle || `Item #${index + 1}`;
+
+                return (
+                  <SortableItem key={field.id} id={field.id}>
+                    <div 
+                      className={`border rounded-xl transition-all overflow-hidden ${
+                        isExpanded 
+                          ? 'bg-slate-950/70 border-indigo-500/50 shadow-lg' 
+                          : 'bg-slate-950/40 border-slate-800/80 hover:bg-slate-950/60 hover:border-slate-700/80'
+                      }`}
+                    >
+                      {/* Accordion Header */}
+                      <div 
+                        className="flex items-center justify-between px-5 py-4 cursor-pointer select-none pl-11"
+                        onClick={() => setExpandedIndex(isExpanded ? null : index)}
+                      >
+                        <div className="flex-grow flex items-center justify-between">
+                          <span className={`text-xs font-bold ${isExpanded ? 'text-indigo-400' : 'text-slate-300'}`}>
+                            {titleText}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-slate-500 font-medium font-mono hidden sm:inline">
+                              {watch(`customSections.${sectionId}.items.${index}.date` as any)}
+                            </span>
+                            {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            remove(index);
+                            if (expandedIndex === index) setExpandedIndex(null);
+                          }}
+                          className="ml-4 text-slate-500 hover:text-rose-400 transition-colors p-1"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* Expanded Fields */}
+                      {isExpanded && (
+                        <div className="p-5 border-t border-slate-800/60 space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Item Name / Title</label>
+                              <input
+                                {...register(`customSections.${sectionId}.items.${index}.title` as any)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="e.g. Spanish"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Subtitle / Details</label>
+                              <input
+                                {...register(`customSections.${sectionId}.items.${index}.subtitle` as any)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="e.g. Fluent"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Date / Period</label>
+                              <input
+                                {...register(`customSections.${sectionId}.items.${index}.date` as any)}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600"
+                                placeholder="e.g. 2024"
+                              />
+                            </div>
+
+                            <div className="md:col-span-2 space-y-1">
+                              <div className="flex justify-between items-center mb-1">
+                                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Description</label>
+                                <InlineAiButton
+                                  fieldName={`customSections.${sectionId}.items.${index}.description`}
+                                  currentValue={watch(`customSections.${sectionId}.items.${index}.description` as any) || ''}
+                                  tone="improve"
+                                  label="AI Improve"
+                                />
+                              </div>
+                              <textarea
+                                {...register(`customSections.${sectionId}.items.${index}.description` as any)}
+                                rows={3}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 placeholder-slate-600 leading-relaxed"
+                                placeholder="Additional description info..."
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </SortableItem>
+                );
+              })}
+            </div>
+          </SortableContext>
+        </DndContext>
+      )}
+    </div>
+  );
+}
+

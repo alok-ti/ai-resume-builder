@@ -64,6 +64,20 @@ export const skillsSchema = z.object({
   softSkills: z.array(z.string()),
 });
 
+export const customSectionItemSchema = z.object({
+  id: z.string(),
+  title: z.string().min(2, { message: 'Title is required' }),
+  subtitle: z.string().optional().or(z.literal('')),
+  date: z.string().optional().or(z.literal('')),
+  description: z.string().optional().or(z.literal('')),
+});
+
+export const customSectionSchema = z.object({
+  id: z.string(),
+  title: z.string().min(2, { message: 'Section Title is required' }),
+  items: z.array(customSectionItemSchema),
+});
+
 export const visibleSectionsSchema = z.object({
   personalInfo: z.boolean(),
   workExperience: z.boolean(),
@@ -72,7 +86,7 @@ export const visibleSectionsSchema = z.object({
   skills: z.boolean(),
   certificates: z.boolean(),
   achievements: z.boolean(),
-});
+}).catchall(z.boolean());
 
 export const resumeSchema = z.object({
   personalInfo: personalInfoSchema,
@@ -85,6 +99,14 @@ export const resumeSchema = z.object({
   templateId: z.enum(['modern-minimalist', 'professional', 'executive']),
   sectionOrder: z.array(z.string()),
   visibleSections: visibleSectionsSchema,
+  customSections: z.record(z.string(), customSectionSchema).optional(),
+  parentResumeId: z.string().optional(),
+  history: z.array(z.object({
+    id: z.string(),
+    timestamp: z.string(),
+    label: z.string(),
+    data: z.any(),
+  })).optional(),
 });
 
 export type ResumeValues = z.infer<typeof resumeSchema>;

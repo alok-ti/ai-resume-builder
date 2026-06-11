@@ -369,7 +369,7 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
           Professional Experience
         </Text>
         {workExperience.map((exp, index) => (
-          <View key={exp.id || index} style={{ marginBottom: 8 }}>
+          <View key={exp.id || index} style={{ marginBottom: 8 }} wrap={false}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', maxWidth: '80%' }}>
                 <Text style={{ fontSize: 8.5, fontFamily: fontHeader, color: '#0f172a' }}>{exp.position}</Text>
@@ -397,7 +397,7 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
           Projects
         </Text>
         {projects.map((proj, index) => (
-          <View key={proj.id || index} style={{ marginBottom: 8 }}>
+          <View key={proj.id || index} style={{ marginBottom: 8 }} wrap={false}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', maxWidth: '75%' }}>
                 <Text style={{ fontSize: 8.5, fontFamily: fontHeader, color: '#0f172a' }}>{proj.projectName}</Text>
@@ -426,7 +426,7 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
           Education
         </Text>
         {education.map((edu, index) => (
-          <View key={edu.id || index} style={{ marginBottom: 6 }}>
+          <View key={edu.id || index} style={{ marginBottom: 6 }} wrap={false}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <View style={{ maxWidth: '80%' }}>
                 <Text style={{ fontSize: 8.5, fontFamily: fontHeader, color: '#0f172a' }}>
@@ -481,7 +481,7 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
           Certifications
         </Text>
         {certificates.map((cert, index) => (
-          <View key={cert.id || index} style={styles.certItem}>
+          <View key={cert.id || index} style={styles.certItem} wrap={false}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
               <Text style={{ fontSize: 8, fontFamily: fontHeader, color: '#0f172a' }}>{cert.name}</Text>
               <Text style={{ fontSize: 7, color: '#64748b' }}>{cert.date}</Text>
@@ -507,7 +507,7 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
           Achievements
         </Text>
         {achievements.map((ach, index) => (
-          <View key={ach.id || index} style={styles.achItem}>
+          <View key={ach.id || index} style={styles.achItem} wrap={false}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
               <Text style={{ fontSize: 8, fontFamily: fontHeader, color: '#0f172a' }}>{ach.title}</Text>
               <Text style={{ fontSize: 7, color: '#64748b' }}>{ach.date}</Text>
@@ -523,7 +523,42 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
     );
   };
 
+  const renderCustomSection = (key: string) => {
+    const section = data.customSections?.[key] as any;
+    const isVisible = visibleSections?.[key] ?? true;
+    if (!section || !isVisible || !section.items || section.items.length === 0) return null;
+    return (
+      <View style={{ marginBottom: 10 }} wrap={false}>
+        <Text style={[
+          templateId === 'professional' ? styles.professionalSectionTitle : styles.minimalistSectionTitle,
+          { fontFamily: fontHeader }
+        ]}>
+          {section.title}
+        </Text>
+        {(section.items || []).map((item: any, index: number) => (
+          <View key={item.id || index} style={{ marginBottom: 6 }} wrap={false}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <View style={{ maxWidth: '80%' }}>
+                <Text style={{ fontSize: 8.5, fontFamily: fontHeader, color: '#0f172a' }}>{item.title}</Text>
+                {item.subtitle ? <Text style={{ fontSize: 7.5, color: '#475569', marginTop: 1, fontFamily: fontRegular }}>{item.subtitle}</Text> : null}
+              </View>
+              {item.date ? <Text style={styles.itemDate}>{item.date}</Text> : null}
+            </View>
+            {item.description ? (
+              <Text style={{ fontSize: 7.5, color: '#475569', marginTop: 2, fontFamily: fontRegular, lineHeight: 1.2 }}>
+                {item.description}
+              </Text>
+            ) : null}
+          </View>
+        ))}
+      </View>
+    );
+  };
+
   const renderSection = (key: string) => {
+    if (key.startsWith('custom_')) {
+      return renderCustomSection(key);
+    }
     switch (key) {
       case 'workExperience':
         return renderExperience();
