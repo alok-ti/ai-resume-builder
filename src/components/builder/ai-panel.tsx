@@ -16,11 +16,15 @@ import {
   FileText,
   TrendingUp,
   X,
-  RefreshCw
+  RefreshCw,
+  HelpCircle,
+  ChevronDown,
+  ChevronUp,
+  ShieldAlert
 } from 'lucide-react';
 import { useToast } from '@/components/ui/toast';
 
-type TabType = 'copilot' | 'ats' | 'coverletter' | 'chat';
+type TabType = 'copilot' | 'ats' | 'coverletter' | 'chat' | 'interview' | 'repair';
 
 interface Message {
   role: 'user' | 'model';
@@ -91,6 +95,23 @@ export function AIPanel() {
   const [generatedCoverLetter, setGeneratedCoverLetter] = useState<string>('');
   const [isCoverLetterLoading, setIsCoverLetterLoading] = useState(false);
   const [coverLetterError, setCoverLetterError] = useState<string | null>(null);
+
+  // Interview Prep
+  const [interviewJobDescription, setInterviewJobDescription] = useState('');
+  const [interviewQuestions, setInterviewQuestions] = useState<Array<{
+    question: string;
+    answer: string;
+    type: 'behavioral' | 'technical' | 'situational';
+  }> | null>(null);
+  const [isInterviewLoading, setIsInterviewLoading] = useState(false);
+  const [interviewError, setInterviewError] = useState<string | null>(null);
+  const [expandedQuestionIdx, setExpandedQuestionIdx] = useState<number | null>(null);
+
+  // Compare section state
+  const [compareSection, setCompareSection] = useState<'summary' | 'experience' | 'skills'>('summary');
+
+  const hasImportMetadata = !!watch('importMetadata' as any);
+  const importMetadata = watch('importMetadata' as any);
 
   // AI Chat Assistant
   const [chatInput, setChatInput] = useState('');
@@ -467,6 +488,52 @@ export function AIPanel() {
     }
   };
 
+  // G. Interview Prep
+  const handleGenerateInterviewPrep = async () => {
+    if (!interviewJobDescription.trim()) return;
+    setIsInterviewLoading(true);
+    setInterviewError(null);
+    setInterviewQuestions(null);
+    setExpandedQuestionIdx(null);
+    const loaderToastId = toast.loading('Preparing practice interview questions...');
+
+    try {
+      const resumeData = getValues();
+
+      const response = await fetch('/api/ai?action=interview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          resumeData,
+          jobDescription: interviewJobDescription
+        })
+      });
+
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+
+      setInterviewQuestions(data.questions || []);
+      toast.dismiss(loaderToastId);
+      toast.success('Generated 5 mock interview questions!');
+    } catch (err: any) {
+      console.error(err);
+      setInterviewError(err.message || 'Failed to generate interview questions.');
+      toast.dismiss(loaderToastId);
+      toast.error('Interview Prep generation failed.');
+    } finally {
+      setIsInterviewLoading(false);
+    }
+  };
+
+
+  const tabsList = [
+    { id: 'copilot', label: 'Co-Pilot', icon: <Sparkles className="w-3 h-3" /> },
+    { id: 'ats', label: 'ATS & Tailor', icon: <TrendingUp className="w-3 h-3" /> },
+    { id: 'coverletter', label: 'Cover Letter', icon: <FileText className="w-3 h-3" /> },
+    { id: 'interview', label: 'Interview Prep', icon: <HelpCircle className="w-3 h-3" /> },
+    { id: 'chat', label: 'AI Coach', icon: <MessageSquare className="w-3 h-3" /> },
+    ...(hasImportMetadata ? [{ id: 'repair', label: 'Repair & Compare', icon: <ShieldAlert className="w-3 h-3" /> }] : [])
+  ] as const;
 
   // ==========================================================================
   // 3. UI RENDER MARKUP
@@ -480,17 +547,12 @@ export function AIPanel() {
       </div>
 
       {/* Tabs Row */}
-      <div className="flex border-b border-slate-900 pb-px gap-1.5 shrink-0 text-xxs font-bold uppercase tracking-wider select-none">
-        {([
-          { id: 'copilot', label: 'Co-Pilot', icon: <Sparkles className="w-3 h-3" /> },
-          { id: 'ats', label: 'ATS & Tailor', icon: <TrendingUp className="w-3 h-3" /> },
-          { id: 'coverletter', label: 'Cover Letter', icon: <FileText className="w-3 h-3" /> },
-          { id: 'chat', label: 'AI Coach', icon: <MessageSquare className="w-3 h-3" /> }
-        ] as const).map((tab) => (
+      <div className="flex border-b border-slate-900 pb-px gap-1.5 shrink-0 text-xxs font-bold uppercase tracking-wider select-none overflow-x-auto scrollbar-none">
+        {tabsList.map((tab) => (
           <button
             key={tab.id}
             type="button"
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => setActiveTab(tab.id as TabType)}
             className={`flex items-center gap-1 px-3 py-2 rounded-t-xl transition-all border-b-2 ${
               activeTab === tab.id
                 ? 'border-indigo-500 text-indigo-400 bg-slate-900/30'
@@ -992,6 +1054,372 @@ export function AIPanel() {
                   rows={12}
                   className="w-full bg-slate-950/60 border border-slate-850 rounded-xl p-3.5 text-[10px] text-slate-200 focus:outline-none leading-relaxed whitespace-pre-wrap resize-y font-light"
                 />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ====================================================================
+           TAB: REPAIR & COMPARE
+           ==================================================================== */}
+        {activeTab === 'repair' && hasImportMetadata && importMetadata && (
+          <div className="space-y-6 animate-fade-in duration-200">
+            
+            {/* ATS Score & KPI Highlights */}
+            <div className="p-4 bg-slate-900/30 border border-slate-900 rounded-2xl flex items-center gap-4">
+              <div className="relative flex items-center justify-center w-14 h-14 rounded-full bg-slate-950 border-2 border-indigo-500 shadow-md">
+                <span className="text-sm font-bold text-white">{importMetadata.recommendations?.atsScore || 70}%</span>
+              </div>
+              <div className="space-y-0.5">
+                <h4 className="text-xs font-bold text-slate-200">AI Estimated ATS Rating</h4>
+                <p className="text-[9px] text-slate-500 leading-relaxed font-light">
+                  Calculated based on extracted resume parameters, core keyword alignment, and parsed section densities.
+                </p>
+              </div>
+            </div>
+
+            {/* AI Recommendations */}
+            <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <Sparkles className="w-4 h-4 text-amber-400" />
+                AI Recommendations
+              </h4>
+              
+              {importMetadata.recommendations?.missingKeywords?.length > 0 && (
+                <div className="space-y-1">
+                  <h5 className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Missing Keywords</h5>
+                  <div className="flex flex-wrap gap-1.5 pt-0.5 animate-fade-in">
+                    {importMetadata.recommendations.missingKeywords.map((kw: string, i: number) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => {
+                          const currentSkills = getValues('skills.technicalSkills') || [];
+                          if (!currentSkills.includes(kw)) {
+                            setValue('skills.technicalSkills', [...currentSkills, kw]);
+                            toast.success(`Added '${kw}' to skills!`);
+                          } else {
+                            toast.info(`'${kw}' already added.`);
+                          }
+                        }}
+                        className="group flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:border-indigo-500/50 hover:bg-indigo-500/20 transition-all font-semibold cursor-pointer animate-fade-in"
+                      >
+                        {kw}
+                        <Plus className="w-2.5 h-2.5 text-indigo-500 group-hover:text-indigo-400" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {importMetadata.recommendations?.skillGaps?.length > 0 && (
+                <div className="space-y-1 pt-1.5 animate-fade-in">
+                  <h5 className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Detected Skill Gaps</h5>
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {importMetadata.recommendations.skillGaps.map((gap: string, i: number) => (
+                      <span key={i} className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 font-semibold">
+                        {gap}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {importMetadata.recommendations?.industryRecommendations?.length > 0 && (
+                <div className="space-y-1.5 pt-2 border-t border-slate-900/60">
+                  <h5 className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Industry Advice</h5>
+                  <ul className="list-disc pl-4 text-[9px] text-slate-300 leading-relaxed space-y-1 font-light">
+                    {importMetadata.recommendations.industryRecommendations.map((rec: string, i: number) => (
+                      <li key={i}>{rec}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+
+            {/* Quality Audit & Repair Checklist */}
+            <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 text-rose-400" />
+                AI Quality Repair Report
+              </h4>
+              <p className="text-[10px] text-slate-400 leading-relaxed font-light">
+                Checklist of formatting anomalies, spelling/grammar slips, or content structure flaws detected in your uploaded copy.
+              </p>
+
+              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                {importMetadata.audit?.formattingIssues?.length > 0 && (
+                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Formatting Issues</span>
+                    <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
+                      {importMetadata.audit.formattingIssues.map((item: string, i: number) => (
+                        <li key={i}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {importMetadata.audit?.missingInfo?.length > 0 && (
+                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Missing Information</span>
+                    <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
+                      {importMetadata.audit.missingInfo.map((item: string, i: number) => (
+                        <li key={i}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {importMetadata.audit?.weakBullets?.length > 0 && (
+                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Weak Bullet Points</span>
+                    <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
+                      {importMetadata.audit.weakBullets.map((item: string, i: number) => (
+                        <li key={i}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {importMetadata.audit?.grammarIssues?.length > 0 && (
+                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Grammar & Spelling</span>
+                    <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
+                      {importMetadata.audit.grammarIssues.map((item: string, i: number) => (
+                        <li key={i}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {importMetadata.audit?.repetitiveContent?.length > 0 && (
+                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Repetitive Wording</span>
+                    <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
+                      {importMetadata.audit.repetitiveContent.map((item: string, i: number) => (
+                        <li key={i}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Version Comparison View */}
+            <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+              <div className="flex justify-between items-center border-b border-slate-850 pb-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                  Version Comparison
+                </h4>
+                <select
+                  value={compareSection}
+                  onChange={(e) => setCompareSection(e.target.value as any)}
+                  className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-[10px] text-slate-300 focus:outline-none"
+                >
+                  <option value="summary">Summary</option>
+                  <option value="experience">Experience</option>
+                  <option value="skills">Skills</option>
+                </select>
+              </div>
+
+              {/* Compare Summary */}
+              {compareSection === 'summary' && (
+                <div className="space-y-2.5 animate-fade-in">
+                  <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                    <span className="text-[8px] font-black text-rose-400/80 uppercase">Original Summary:</span>
+                    <p className="text-[10px] text-slate-500 leading-relaxed font-light italic">
+                      &quot;{importMetadata.originalData?.personalInfo?.summary || 'No summary listed'}&quot;
+                    </p>
+                  </div>
+                  <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                    <span className="text-[8px] font-black text-emerald-400 uppercase">Current Summary:</span>
+                    <p className="text-[10px] text-slate-200 leading-relaxed font-light">
+                      &quot;{watch('personalInfo.summary') || 'No summary listed'}&quot;
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Compare Experience */}
+              {compareSection === 'experience' && (
+                <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1 animate-fade-in">
+                  {(importMetadata.originalData?.workExperience || []).map((origExp: any, idx: number) => {
+                    const currentExp = watch(`workExperience.${idx}` as any) as any;
+                    const cleanOrigDesc = (origExp.description || '').replace(/<[^>]*>/g, '').trim();
+                    const cleanCurrDesc = (currentExp?.description || '').replace(/<[^>]*>/g, '').trim();
+                    const isModified = cleanOrigDesc !== cleanCurrDesc;
+
+                    return (
+                      <div key={idx} className="space-y-2 border-b border-slate-900 pb-3 last:border-b-0">
+                        <div className="flex justify-between items-center text-[9px] font-extrabold tracking-wide uppercase">
+                          <span className="text-slate-400">{origExp.company} — {origExp.position}</span>
+                          {isModified ? (
+                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">Modified</span>
+                          ) : (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-850 text-slate-500">Same</span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-1 gap-2">
+                          <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl">
+                            <span className="text-[8px] font-bold text-slate-500">Original:</span>
+                            <div className="text-[9px] text-slate-500 leading-relaxed font-light mt-1 whitespace-pre-wrap italic">
+                              {cleanOrigDesc}
+                            </div>
+                          </div>
+                          <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl">
+                            <span className="text-[8px] font-bold text-slate-300">Current:</span>
+                            <div className="text-[9px] text-slate-300 leading-relaxed font-light mt-1 whitespace-pre-wrap">
+                              {cleanCurrDesc}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Compare Skills */}
+              {compareSection === 'skills' && (
+                <div className="space-y-3 animate-fade-in">
+                  <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-2">
+                    <span className="text-[8px] font-black text-rose-400/80 uppercase">Original Skills:</span>
+                    <div className="text-[9px] text-slate-500 font-light flex flex-wrap gap-1">
+                      {[(importMetadata.originalData?.skills?.technicalSkills || []), (importMetadata.originalData?.skills?.softSkills || [])].flat().map((s, i) => (
+                        <span key={i} className="px-1.5 py-0.5 bg-slate-900 border border-slate-850 rounded-full">
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-2">
+                    <span className="text-[8px] font-black text-emerald-400 uppercase">Current Skills:</span>
+                    <div className="text-[9px] text-slate-300 font-light flex flex-wrap gap-1">
+                      {[(watch('skills.technicalSkills') || []), (watch('skills.softSkills') || [])].flat().map((s, i) => (
+                        <span key={i} className="px-1.5 py-0.5 bg-slate-900 border border-slate-850 rounded-full">
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
+
+        {/* ====================================================================
+           TAB: INTERVIEW PREPARATION
+           ==================================================================== */}
+        {activeTab === 'interview' && (
+          <div className="space-y-6 animate-fade-in duration-200">
+            <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <HelpCircle className="w-4 h-4 text-indigo-400" />
+                AI Interview Prep
+              </h4>
+              <p className="text-[10px] text-slate-400 leading-relaxed font-light">
+                Generates tailored mock interview questions and structured model answers based on your resume and target job.
+              </p>
+              <div className="space-y-2">
+                <textarea
+                  value={interviewJobDescription}
+                  onChange={(e) => setInterviewJobDescription(e.target.value)}
+                  rows={3.5}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white placeholder-slate-600 focus:ring-1 focus:ring-indigo-500 focus:outline-none leading-relaxed"
+                  placeholder="Paste target Job Description details here to get tailored questions..."
+                />
+                <button
+                  type="button"
+                  onClick={handleGenerateInterviewPrep}
+                  disabled={isInterviewLoading || !interviewJobDescription.trim()}
+                  className="w-full flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl disabled:opacity-40 transition-all shadow-md shadow-indigo-600/10 cursor-pointer"
+                >
+                  {isInterviewLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Brain className="w-3.5 h-3.5" />
+                  )}
+                  Generate Interview Questions
+                </button>
+              </div>
+              {interviewError && (
+                <p className="text-rose-400 text-[10px] font-medium flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5" /> {interviewError}
+                </p>
+              )}
+            </div>
+
+            {interviewQuestions && (
+              <div className="space-y-3.5 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl animate-fade-in">
+                <div className="flex justify-between items-center border-b border-slate-800 pb-2.5">
+                  <span className="text-[9px] uppercase font-black tracking-widest text-indigo-400">Practice Q&A Cards:</span>
+                  <button
+                    type="button"
+                    onClick={() => setInterviewQuestions(null)}
+                    className="text-slate-500 hover:text-white transition-colors"
+                    title="Clear Questions"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {interviewQuestions.length === 0 ? (
+                  <p className="text-[10px] text-slate-400 italic font-light">
+                    No questions generated. Please try again.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {interviewQuestions.map((q, idx) => {
+                      const isExpanded = expandedQuestionIdx === idx;
+                      const badgeColor =
+                        q.type === 'technical'
+                          ? 'bg-purple-500/10 border-purple-500/20 text-purple-400'
+                          : q.type === 'situational'
+                          ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                          : 'bg-sky-500/10 border-sky-500/20 text-sky-400';
+                      
+                      return (
+                        <div
+                          key={idx}
+                          className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-2 hover:border-indigo-500/30 transition-all"
+                        >
+                          <div className="flex flex-col gap-1">
+                            <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded-full border w-fit ${badgeColor}`}>
+                              {q.type}
+                            </span>
+                            <p className="text-xs font-bold text-white mt-1 leading-relaxed">
+                              Q{idx + 1}: {q.question}
+                            </p>
+                          </div>
+                          
+                          <div className="pt-2 border-t border-slate-900 flex flex-col gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedQuestionIdx(isExpanded ? null : idx)}
+                              className="w-full flex items-center justify-between text-[10px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors select-none cursor-pointer"
+                            >
+                              <span>{isExpanded ? 'Hide Talking Points' : 'Show Talking Points'}</span>
+                              {isExpanded ? (
+                                <ChevronUp className="w-3.5 h-3.5 text-slate-500" />
+                              ) : (
+                                <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                              )}
+                            </button>
+                            
+                            {isExpanded && (
+                              <div className="p-3 bg-slate-900/40 border border-slate-900/60 rounded-lg text-[10px] text-slate-300 leading-relaxed font-light whitespace-pre-wrap animate-fade-in">
+                                <strong className="text-indigo-300 font-bold block mb-1">Model Answer / Tip:</strong>
+                                {q.answer}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
           </div>

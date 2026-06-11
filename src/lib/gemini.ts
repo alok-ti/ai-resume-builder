@@ -532,3 +532,80 @@ export async function quantifyAchievements(bullets: string[]): Promise<Array<{ o
   }
 }
 
+/**
+ * Generate Interview Prep Q&A recommendations based on resume data and job description
+ */
+export async function generateInterviewPrep(
+  resumeData: any,
+  jobDescription: string
+): Promise<Array<{ question: string; answer: string; type: 'behavioral' | 'technical' | 'situational' }>> {
+  if (!apiKey) {
+    console.warn("GEMINI_API_KEY is not configured. Running in Mock Mode for interview preparation.");
+    const targetTitle = resumeData?.personalInfo?.title || 'Professional';
+    const skillsList = [
+      ...(resumeData?.skills?.technicalSkills || []),
+      ...(resumeData?.skills?.softSkills || [])
+    ].slice(0, 3).join(', ') || 'software development';
+
+    return [
+      {
+        question: `Tell me about a project you led as a ${targetTitle} where you used ${skillsList || 'your core skills'}.`,
+        answer: `Use the STAR method: Situation (describe the challenge or project goal), Task (your specific responsibility), Action (how you leveraged ${skillsList} to build/optimize), and Result (the measurable outcome, like performance improvements or speed gains).`,
+        type: 'behavioral'
+      },
+      {
+        question: `What is your approach to learning and implementing new tools or frameworks when a job requires them?`,
+        answer: `Highlight a specific instance from your resume where you adapted quickly. Focus on hands-on prototyping, reviewing documentation, and contributing to production code within a short timeline.`,
+        type: 'situational'
+      },
+      {
+        question: `How do you handle technical disagreements or code reviews within a software engineering team?`,
+        answer: `Emphasize constructive feedback, active listening, and seeking objective standard practices (documentation, style guides, benchmarks) rather than subjective opinions.`,
+        type: 'behavioral'
+      },
+      {
+        question: `Can you walk me through the architecture of a complex application or database you worked on?`,
+        answer: `Structure your response logically: explain the business requirement, the technical stack chosen, the data flow/models, and how you solved potential scalability or latency issues.`,
+        type: 'technical'
+      },
+      {
+        question: `Based on the job description, how would you optimize performance and security in a modern web app?`,
+        answer: `Discuss using clean separation of concerns, API gateway/caching strategies, server-side rendering (e.g. Next.js), and Row-Level Security (RLS) or HTTPS/encryption best practices.`,
+        type: 'technical'
+      }
+    ];
+  }
+
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const prompt = `
+    Act as an elite interviewer and technical hiring manager. Analyze the following resume details and target job description to generate exactly 5 highly relevant interview questions that this candidate is likely to face. For each question, provide a suggested structured answer or key talking points tailored to the candidate's background and matching the job description.
+    
+    Resume Data:
+    ${JSON.stringify(resumeData)}
+    
+    Job Description Details:
+    "${jobDescription}"
+    
+    Provide questions that cover behavioral, situational, and technical aspects.
+    Format your response as a JSON array of objects:
+    [
+      {
+        "question": "Question text?",
+        "answer": "Suggested answer or talking points...",
+        "type": "behavioral" // 'behavioral' | 'technical' | 'situational'
+      }
+    ]
+    Return ONLY the raw JSON array. Do not wrap in markdown code tags.
+  `;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const outputText = result.response.text().trim();
+    const cleanJson = outputText.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (err) {
+    console.error('Failed to parse interview prep questions from AI, falling back to empty suggestions', err);
+    return [];
+  }
+}
+

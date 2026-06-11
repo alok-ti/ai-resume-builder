@@ -9,7 +9,8 @@ import {
   analyzeResume,
   chatAssistant,
   rewriteInPlace,
-  quantifyAchievements
+  quantifyAchievements,
+  generateInterviewPrep
 } from '@/lib/gemini';
 
 export async function POST(request: Request) {
@@ -106,6 +107,15 @@ export async function POST(request: Request) {
       const { bullets = [] } = body;
       const suggestions = await quantifyAchievements(bullets);
       return NextResponse.json({ suggestions });
+    }
+
+    // ==========================================
+    // 11. AI INTERVIEW PREPARATION ACTION
+    // ==========================================
+    if (action === 'interview') {
+      const { resumeData, jobDescription = '' } = body;
+      const questions = await generateInterviewPrep(resumeData, jobDescription);
+      return NextResponse.json({ questions });
     }
 
     return NextResponse.json({ error: 'Invalid action parameter' }, { status: 400 });

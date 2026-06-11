@@ -5,6 +5,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createResume, deleteResume, duplicateResume } from './actions';
 import { logout } from '../auth/actions';
+import { CoverLettersClient } from '@/components/dashboard/cover-letters-client';
+import { JobTrackerClient } from '@/components/dashboard/job-tracker-client';
+import { AnalyticsClient } from '@/components/dashboard/analytics-client';
 import {
   FileText,
   Plus,
@@ -22,8 +25,10 @@ import {
   CheckCircle,
   XCircle,
   Info,
-  Copy
+  Copy,
+  UploadCloud
 } from 'lucide-react';
+import { ImportResumeModal } from '@/components/dashboard/import-resume-modal';
 
 interface DashboardListClientProps {
   resumes: any[];
@@ -49,6 +54,8 @@ export function DashboardListClient({ resumes, profile, userEmail }: DashboardLi
   const [toasts, setToasts] = useState<Toast[]>([]);
   // Creation status for custom loading overlays
   const [creationStatus, setCreationStatus] = useState<'idle' | 'creating' | 'success' | 'error'>('idle');
+  const [activeTab, setActiveTab] = useState<'resumes' | 'cover-letters' | 'job-tracker' | 'analytics'>('resumes');
+  const [isImportOpen, setIsImportOpen] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
     const id = ++toastIdCounter;
@@ -262,13 +269,54 @@ export function DashboardListClient({ resumes, profile, userEmail }: DashboardLi
         <aside className="lg:col-span-1 space-y-6">
           <div className="bg-slate-900/40 border border-slate-800/80 rounded-2xl p-5 space-y-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">Workspace</h3>
-            <div className="space-y-1 text-xs">
+            <div className="space-y-1.5 text-xs">
               <button
                 type="button"
-                className="w-full flex items-center gap-2.5 px-3 py-2 bg-slate-900 text-blue-400 border border-slate-800/80 rounded-lg font-semibold text-left transition-all cursor-pointer"
+                onClick={() => setActiveTab('resumes')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl font-semibold text-left transition-all cursor-pointer border ${
+                  activeTab === 'resumes'
+                    ? 'bg-blue-600/10 border-blue-500/30 text-blue-400'
+                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+                }`}
               >
                 <FolderOpen className="w-4 h-4" />
                 All Resumes
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('cover-letters')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl font-semibold text-left transition-all cursor-pointer border ${
+                  activeTab === 'cover-letters'
+                    ? 'bg-blue-600/10 border-blue-500/30 text-blue-400'
+                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                Cover Letters
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('job-tracker')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl font-semibold text-left transition-all cursor-pointer border ${
+                  activeTab === 'job-tracker'
+                    ? 'bg-blue-600/10 border-blue-500/30 text-blue-400'
+                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+                }`}
+              >
+                <Trophy className="w-4 h-4" />
+                Job Tracker
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('analytics')}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl font-semibold text-left transition-all cursor-pointer border ${
+                  activeTab === 'analytics'
+                    ? 'bg-blue-600/10 border-blue-500/30 text-blue-400'
+                    : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-900/50'
+                }`}
+              >
+                <Activity className="w-4 h-4" />
+                Resume Analytics
               </button>
             </div>
           </div>
@@ -297,202 +345,246 @@ export function DashboardListClient({ resumes, profile, userEmail }: DashboardLi
 
         {/* Main Content Area */}
         <main className="lg:col-span-3 space-y-8">
-          
-          {/* Welcome section */}
-          <div className="relative bg-slate-900/40 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row justify-between items-center gap-6 shadow-2xl">
-            <div className="space-y-2 text-center sm:text-left">
-              <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2 justify-center sm:justify-start">
-                Welcome back, {displayName}!
-              </h2>
-              <p className="text-slate-400 text-xs sm:text-sm max-w-lg leading-relaxed">
-                Create new layout variants using our ATS-optimized structures, analyze skill sets, or download a printable PDF copy.
-              </p>
-            </div>
-
-            <button
-              type="button"
-              disabled={isCreating}
-              onClick={() => handleCreate('modern-minimalist', `${displayName}'s Resume`)}
-              className="flex items-center justify-center gap-1.5 px-5 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-xl disabled:opacity-50 transition-all duration-200 shrink-0 shadow-lg shadow-blue-500/10 hover:shadow-blue-500/20 cursor-pointer"
-            >
-              {isCreating ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Plus className="w-4 h-4" />
-              )}
-              Create New Resume
-            </button>
-          </div>
-
-          {/* Templates Selector section */}
-          <section className="space-y-4">
-            <h3 className="text-lg font-bold text-white flex items-center gap-2">
-              <LayoutGrid className="w-5 h-5 text-indigo-400" />
-              Start from a Layout Template
-            </h3>
-            
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-              
-              {/* Template 1 */}
-              <button
-                type="button"
-                disabled={isCreating}
-                onClick={() => handleCreate('modern-minimalist', 'My Modern Minimalist Resume')}
-                className="group p-5 bg-slate-900/30 border border-slate-900 rounded-2xl hover:border-blue-500/40 hover:bg-slate-900/60 transition-all duration-300 text-left space-y-3 cursor-pointer"
-              >
-                <div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:bg-blue-500/20 transition-all">
-                  <FileText className="w-4.5 h-4.5" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-white group-hover:text-blue-400 transition-colors">Modern Minimalist</h4>
-                  <p className="text-slate-400 text-xxs leading-relaxed mt-1">
-                    Clean, standardized typography layout. Excellent for software engineering, product, and tech roles.
+          {activeTab === 'resumes' && (
+            <>
+              {/* Welcome section */}
+              <div className="relative bg-slate-900/40 backdrop-blur-xl border border-slate-800/80 rounded-3xl p-6 sm:p-8 flex flex-col sm:flex-row justify-between items-center gap-6 shadow-2xl">
+                <div className="space-y-2 text-center sm:text-left">
+                  <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2 justify-center sm:justify-start">
+                    Welcome back, {displayName}!
+                  </h2>
+                  <p className="text-slate-400 text-xs sm:text-sm max-w-lg leading-relaxed">
+                    Create new layout variants using our ATS-optimized structures, analyze skill sets, or download a printable PDF copy.
                   </p>
                 </div>
-              </button>
 
-              {/* Template 2 */}
-              <button
-                type="button"
-                disabled={isCreating}
-                onClick={() => handleCreate('professional', 'My Professional Serif Resume')}
-                className="group p-5 bg-slate-900/30 border border-slate-900 rounded-2xl hover:border-indigo-500/40 hover:bg-slate-900/60 transition-all duration-300 text-left space-y-3 cursor-pointer"
-              >
-                <div className="w-9 h-9 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 group-hover:bg-indigo-500/20 transition-all">
-                  <Award className="w-4.5 h-4.5" />
+                <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => setIsImportOpen(true)}
+                    className="flex items-center justify-center gap-1.5 px-5 py-3 text-sm font-semibold text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:bg-slate-850 rounded-xl transition-all duration-200 cursor-pointer shadow-md"
+                  >
+                    <UploadCloud className="w-4 h-4 text-indigo-400 animate-pulse" />
+                    Import Resume
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isCreating}
+                    onClick={() => handleCreate('modern-minimalist', `${displayName}'s Resume`)}
+                    className="flex items-center justify-center gap-1.5 px-5 py-3 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-500 rounded-xl disabled:opacity-50 transition-all duration-200 shrink-0 shadow-lg shadow-blue-500/10 hover:shadow-blue-500/20 cursor-pointer"
+                  >
+                    {isCreating ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Plus className="w-4 h-4" />
+                    )}
+                    Create New Resume
+                  </button>
                 </div>
-                <div>
-                  <h4 className="text-sm font-bold text-white group-hover:text-indigo-400 transition-colors">Professional Serif</h4>
-                  <p className="text-slate-400 text-xxs leading-relaxed mt-1">
-                    Centered serif headers with classic horizontal borders. Standard format for consulting, legal, and banking roles.
-                  </p>
-                </div>
-              </button>
-
-              {/* Template 3 */}
-              <button
-                type="button"
-                disabled={isCreating}
-                onClick={() => handleCreate('executive', 'My Executive Split Resume')}
-                className="group p-5 bg-slate-900/30 border border-slate-900 rounded-2xl hover:border-purple-500/40 hover:bg-slate-900/60 transition-all duration-300 text-left space-y-3 cursor-pointer"
-              >
-                <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400 group-hover:bg-purple-500/20 transition-all">
-                  <Trophy className="w-4.5 h-4.5" />
-                </div>
-                <div>
-                  <h4 className="text-sm font-bold text-white group-hover:text-purple-400 transition-colors">Executive Split</h4>
-                  <p className="text-slate-400 text-xxs leading-relaxed mt-1">
-                    Sleek dual-column design with contact sidebar. Ideal for designers, marketers, and manager level roles.
-                  </p>
-                </div>
-              </button>
-
-            </div>
-          </section>
-
-          {/* Your Resumes Grid Section */}
-          <section className="space-y-4">
-            <h3 className="text-lg font-bold text-white flex items-center gap-2">
-              <FolderOpen className="w-5 h-5 text-blue-400" />
-              Your Resumes
-            </h3>
-
-            {resumes.length === 0 ? (
-              <div className="p-12 border border-dashed border-slate-800 bg-slate-900/10 rounded-2xl flex flex-col justify-center items-center text-center">
-                <FileText className="w-10 h-10 text-slate-600 mb-3" />
-                <h4 className="text-sm font-bold text-slate-300">No Resumes Found</h4>
-                <p className="text-slate-500 text-xs mt-1 max-w-sm">
-                  Click on any template layout above to generate your first professional resume canvas.
-                </p>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {resumes.map((resume) => {
-                  const isDeleting = deletingId === resume.id;
+
+              {/* Templates Selector section */}
+              <section className="space-y-4">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <LayoutGrid className="w-5 h-5 text-indigo-400" />
+                  Start from a Layout Template
+                </h3>
+                
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
                   
-                  return (
-                    <div
-                      key={resume.id}
-                      className="p-5 bg-slate-900/40 border border-slate-800 rounded-2xl hover:border-slate-700/80 transition-all flex flex-col justify-between gap-4 group"
-                    >
-                      <div className="space-y-2">
-                        <div className="flex justify-between items-start">
-                          <Link
-                            href={`/builder/${resume.id}`}
-                            className="font-bold text-sm text-slate-200 group-hover:text-blue-400 transition-colors line-clamp-1 cursor-pointer"
-                          >
-                            {resume.title}
-                          </Link>
-                          
-                          <div className="flex items-center gap-1.5 self-start">
-                            <button
-                              type="button"
-                              disabled={duplicatingId !== null || isDeleting}
-                              onClick={() => handleDuplicate(resume.id)}
-                              className="text-slate-500 hover:text-blue-400 p-1 rounded transition-colors disabled:opacity-30 cursor-pointer"
-                              title="Duplicate resume"
-                            >
-                              {duplicatingId === resume.id ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <Copy className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-
-                            <button
-                              type="button"
-                              disabled={isDeleting || duplicatingId !== null}
-                              onClick={() => handleDelete(resume.id)}
-                              className="text-slate-500 hover:text-red-400 p-1 rounded transition-colors disabled:opacity-30 cursor-pointer"
-                              title="Delete resume"
-                            >
-                              {isDeleting ? (
-                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <Trash2 className="w-3.5 h-3.5" />
-                              )}
-                            </button>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="text-[10px] bg-slate-950 border border-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-medium">
-                            {getTemplateName(resume.template_id)}
-                          </span>
-                          {resume.resume_data?.status === 'completed' ? (
-                            <span className="text-[10px] bg-emerald-950/80 border border-emerald-500/30 text-emerald-400 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
-                              <CheckCircle className="w-2.5 h-2.5 text-emerald-400" />
-                              Completed
-                            </span>
-                          ) : (
-                            <span className="text-[10px] bg-amber-950/80 border border-amber-500/30 text-amber-400 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
-                              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
-                              Draft
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="border-t border-slate-800/80 pt-3 flex justify-between items-center text-xxs text-slate-500">
-                        <span className="flex items-center gap-1"><Calendar className="w-3 h-3 text-slate-600" /> {formatDate(resume.updated_at)}</span>
-                        <Link
-                          href={`/builder/${resume.id}`}
-                          className="flex items-center gap-0.5 text-blue-500 font-semibold hover:text-blue-400 transition-colors cursor-pointer"
-                        >
-                          Edit Resume
-                          <Edit3 className="w-3 h-3" />
-                        </Link>
-                      </div>
-
+                  {/* Template 1 */}
+                  <button
+                    type="button"
+                    disabled={isCreating}
+                    onClick={() => handleCreate('modern-minimalist', 'My Modern Minimalist Resume')}
+                    className="group p-5 bg-slate-900/30 border border-slate-900 rounded-2xl hover:border-blue-500/40 hover:bg-slate-900/60 transition-all duration-300 text-left space-y-3 cursor-pointer"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-400 group-hover:bg-blue-500/20 transition-all">
+                      <FileText className="w-4.5 h-4.5" />
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+                    <div>
+                      <h4 className="text-sm font-bold text-white group-hover:text-blue-400 transition-colors">Modern Minimalist</h4>
+                      <p className="text-slate-400 text-xxs leading-relaxed mt-1">
+                        Clean, standardized typography layout. Excellent for software engineering, product, and tech roles.
+                      </p>
+                    </div>
+                  </button>
 
+                  {/* Template 2 */}
+                  <button
+                    type="button"
+                    disabled={isCreating}
+                    onClick={() => handleCreate('professional', 'My Professional Serif Resume')}
+                    className="group p-5 bg-slate-900/30 border border-slate-900 rounded-2xl hover:border-indigo-500/40 hover:bg-slate-900/60 transition-all duration-300 text-left space-y-3 cursor-pointer"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-400 group-hover:bg-indigo-500/20 transition-all">
+                      <Award className="w-4.5 h-4.5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-white group-hover:text-indigo-400 transition-colors">Professional Serif</h4>
+                      <p className="text-slate-400 text-xxs leading-relaxed mt-1">
+                        Centered serif headers with classic horizontal borders. Standard format for consulting, legal, and banking roles.
+                      </p>
+                    </div>
+                  </button>
+
+                  {/* Template 3 */}
+                  <button
+                    type="button"
+                    disabled={isCreating}
+                    onClick={() => handleCreate('executive', 'My Executive Split Resume')}
+                    className="group p-5 bg-slate-900/30 border border-slate-900 rounded-2xl hover:border-purple-500/40 hover:bg-slate-900/60 transition-all duration-300 text-left space-y-3 cursor-pointer"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-purple-500/10 flex items-center justify-center text-purple-400 group-hover:bg-purple-500/20 transition-all">
+                      <Trophy className="w-4.5 h-4.5" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-white group-hover:text-purple-400 transition-colors">Executive Split</h4>
+                      <p className="text-slate-400 text-xxs leading-relaxed mt-1">
+                        Sleek dual-column design with contact sidebar. Ideal for designers, marketers, and manager level roles.
+                      </p>
+                    </div>
+                  </button>
+
+                </div>
+              </section>
+
+              {/* Your Resumes Grid Section */}
+              <section className="space-y-4">
+                <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                  <FolderOpen className="w-5 h-5 text-blue-400" />
+                  Your Resumes
+                </h3>
+
+                {resumes.length === 0 ? (
+                  <div className="p-12 border border-dashed border-slate-800 bg-slate-900/10 rounded-2xl flex flex-col justify-center items-center text-center">
+                    <FileText className="w-10 h-10 text-slate-600 mb-3" />
+                    <h4 className="text-sm font-bold text-slate-300">No Resumes Found</h4>
+                    <p className="text-slate-500 text-xs mt-1 max-w-sm">
+                      Click on any template layout above to generate your first professional resume canvas.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {resumes.map((resume) => {
+                      const isDeleting = deletingId === resume.id;
+                      
+                      return (
+                        <div
+                          key={resume.id}
+                          className="p-5 bg-slate-900/40 border border-slate-800 rounded-2xl hover:border-slate-700/80 transition-all flex flex-col justify-between gap-4 group"
+                        >
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-start">
+                              <Link
+                                href={`/builder/${resume.id}`}
+                                className="font-bold text-sm text-slate-200 group-hover:text-blue-400 transition-colors line-clamp-1 cursor-pointer"
+                              >
+                                {resume.title}
+                              </Link>
+                              
+                              <div className="flex items-center gap-1.5 self-start">
+                                <button
+                                  type="button"
+                                  disabled={duplicatingId !== null || isDeleting}
+                                  onClick={() => handleDuplicate(resume.id)}
+                                  className="text-slate-500 hover:text-blue-400 p-1 rounded transition-colors disabled:opacity-30 cursor-pointer"
+                                  title="Duplicate resume"
+                                >
+                                  {duplicatingId === resume.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={isDeleting || duplicatingId !== null}
+                                  onClick={() => handleDelete(resume.id)}
+                                  className="text-slate-500 hover:text-red-400 p-1 rounded transition-colors disabled:opacity-30 cursor-pointer"
+                                  title="Delete resume"
+                                >
+                                  {isDeleting ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span className="text-[10px] bg-slate-950 border border-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-medium">
+                                {getTemplateName(resume.template_id)}
+                              </span>
+                              {resume.version_type === 'original' ? (
+                                <span className="text-[10px] bg-indigo-950/80 border border-indigo-500/30 text-indigo-400 px-2 py-0.5 rounded-full font-medium">
+                                  Original Upload
+                                </span>
+                              ) : resume.version_type === 'improved' ? (
+                                <span className="text-[10px] bg-amber-950/80 border border-amber-500/30 text-amber-400 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                                  <Sparkles className="w-2.5 h-2.5 text-amber-400 animate-pulse" />
+                                  AI Improved
+                                </span>
+                              ) : resume.parent_id ? (
+                                <span className="text-[10px] bg-blue-950/80 border border-blue-500/30 text-blue-400 px-2 py-0.5 rounded-full font-medium">
+                                  Tailored Copy
+                                </span>
+                              ) : null}
+                              {resume.resume_data?.status === 'completed' ? (
+                                <span className="text-[10px] bg-emerald-950/80 border border-emerald-500/30 text-emerald-400 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                                  <CheckCircle className="w-2.5 h-2.5 text-emerald-400" />
+                                  Completed
+                                </span>
+                              ) : (
+                                <span className="text-[10px] bg-slate-950 border border-slate-850 text-slate-500 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+                                  Draft
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="border-t border-slate-800/80 pt-3 flex justify-between items-center text-xxs text-slate-500">
+                            <span className="flex items-center gap-1"><Calendar className="w-3 h-3 text-slate-600" /> {formatDate(resume.updated_at)}</span>
+                            <Link
+                              href={`/builder/${resume.id}`}
+                              className="flex items-center gap-0.5 text-blue-500 font-semibold hover:text-blue-400 transition-colors cursor-pointer"
+                            >
+                              Edit Resume
+                              <Edit3 className="w-3 h-3" />
+                            </Link>
+                          </div>
+
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            </>
+          )}
+
+          {activeTab === 'cover-letters' && (
+            <CoverLettersClient resumes={resumes} showToast={showToast} />
+          )}
+
+          {activeTab === 'job-tracker' && (
+            <JobTrackerClient resumes={resumes} showToast={showToast} />
+          )}
+
+          {activeTab === 'analytics' && (
+            <AnalyticsClient showToast={showToast} />
+          )}
         </main>
       </div>
+
+      <ImportResumeModal
+        isOpen={isImportOpen}
+        onClose={() => setIsImportOpen(false)}
+        showToast={showToast}
+      />
 
       {/* Footer */}
       <footer className="border-t border-slate-900/60 bg-slate-950 py-6 text-center text-xs text-slate-500 relative z-10">

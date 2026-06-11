@@ -42,11 +42,13 @@ import {
   History,
   ZoomIn,
   ZoomOut,
-  X
+  X,
+  FileText
 } from 'lucide-react';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import { ResumePDFDocument } from '@/components/builder/pdf-document';
 import { AIPanel } from '@/components/builder/ai-panel';
+import { generateDocxBlob } from '@/lib/docx-exporter';
 import Link from 'next/link';
 import { ToastProvider, useToast } from '@/components/ui/toast';
 
@@ -125,6 +127,30 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
 
   // Preview Zoom State
   const [zoomScale, setZoomScale] = useState<number>(1.0);
+
+  // DOCX Exporter state
+  const [isExportingDocx, setIsExportingDocx] = useState(false);
+
+  const handleExportDocx = async (data: any) => {
+    setIsExportingDocx(true);
+    toast.success('Exporting Word Document...');
+    try {
+      const blob = await generateDocxBlob(data);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const fileName = `${(data.personalInfo?.fullName || 'My_Resume').replace(/\s+/g, '_')}_Resume.docx`;
+      a.download = fileName;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      toast.success('DOCX downloaded successfully!');
+    } catch (err: any) {
+      console.error(err);
+      toast.error('Failed to export DOCX.');
+    } finally {
+      setIsExportingDocx(false);
+    }
+  };
 
   // Manual Snapshots State / Drawer Open
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
@@ -1053,6 +1079,23 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
                   }`}
                 >
                   Mark as Draft
+                </button>
+              )}
+
+              {/* DOCX Exporter Button */}
+              {isMounted && (
+                <button
+                  type="button"
+                  disabled={isExportingDocx}
+                  onClick={() => handleExportDocx(formData)}
+                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:bg-slate-850 rounded-xl transition-all duration-200 shadow-md disabled:opacity-50 cursor-pointer"
+                >
+                  {isExportingDocx ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+                  ) : (
+                    <FileText className="w-3.5 h-3.5 text-blue-400" />
+                  )}
+                  {isExportingDocx ? 'Exporting...' : 'Export DOCX'}
                 </button>
               )}
 

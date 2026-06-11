@@ -215,3 +215,72 @@ export async function duplicateResume(resumeId: string, titleSuffix: string = 'C
   }
 }
 
+export async function fetchResumeAnalytics() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect('/login');
+  }
+
+  const { data, error } = await supabase
+    .from('resume_analytics')
+    .select('*, resumes!inner(title, user_id)')
+    .eq('resumes.user_id', user.id);
+
+  if (error) {
+    console.error('Error fetching analytics:', error);
+    return [];
+  }
+
+  return data || [];
+}
+
+export async function incrementDownloadCount(resumeId: string) {
+  const supabase = await createClient();
+  
+  const { data } = await supabase
+    .from('resume_analytics')
+    .select('download_count')
+    .eq('resume_id', resumeId)
+    .maybeSingle();
+    
+  const currentCount = data?.download_count || 0;
+  
+  const { error } = await supabase
+    .from('resume_analytics')
+    .upsert({
+      resume_id: resumeId,
+      download_count: currentCount + 1,
+      last_downloaded_at: new Date().toISOString()
+    }, { onConflict: 'resume_id' });
+    
+  if (error) {
+    console.error('Error incrementing download count:', error);
+  }
+}
+
+export async function incrementViewCount(resumeId: string) {
+  const supabase = await createClient();
+  
+  const { data } = await supabase
+    .from('resume_analytics')
+    .select('view_count')
+    .eq('resume_id', resumeId)
+    .maybeSingle();
+    
+  const currentCount = data?.view_count || 0;
+  
+  const { error } = await supabase
+    .from('resume_analytics')
+    .upsert({
+      resume_id: resumeId,
+      view_count: currentCount + 1,
+      last_viewed_at: new Date().toISOString()
+    }, { onConflict: 'resume_id' });
+    
+  if (error) {
+    console.error('Error incrementing view count:', error);
+  }
+}
+
