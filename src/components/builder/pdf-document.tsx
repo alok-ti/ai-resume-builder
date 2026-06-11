@@ -342,7 +342,7 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
   const fontRegular = templateId === 'professional' ? 'Times-Roman' : 'Helvetica';
 
   const renderSummary = () => {
-    if (!personalInfo?.summary || !visibleSections.personalInfo) return null;
+    if (!personalInfo?.summary || !(visibleSections.summary ?? true)) return null;
     return (
       <View style={{ marginBottom: 10 }}>
         <Text style={[
@@ -560,6 +560,8 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
       return renderCustomSection(key);
     }
     switch (key) {
+      case 'summary':
+        return renderSummary();
       case 'workExperience':
         return renderExperience();
       case 'education':
@@ -613,8 +615,12 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
               <Text style={styles.executiveSidebarName}>{personalInfo?.fullName || 'Your Name'}</Text>
               <Text style={styles.executiveSidebarTitle}>{personalInfo?.title || 'Professional Title'}</Text>
 
-              <Text style={styles.executiveSidebarSectionTitle}>Contact</Text>
-              {renderExecutiveContacts()}
+              {(visibleSections.personalInfo ?? true) && (
+                <View>
+                  <Text style={styles.executiveSidebarSectionTitle}>Contact</Text>
+                  {renderExecutiveContacts()}
+                </View>
+              )}
 
               {skills?.technicalSkills?.length && visibleSections.skills ? (
                 <View>
@@ -644,7 +650,6 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
             </View>
 
             <View style={styles.executiveMain}>
-              {renderSummary()}
               {sectionOrder
                 .filter(key => key !== 'skills' && key !== 'certificates')
                 .map((sectionKey) => (
@@ -668,17 +673,17 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
             <Text style={styles.professionalName}>{personalInfo?.fullName || 'Your Full Name'}</Text>
             <Text style={styles.professionalTitle}>{personalInfo?.title || 'Professional Title'}</Text>
             
-            <View style={styles.professionalContacts}>
-              {personalInfo?.email ? <Text style={styles.professionalContactItem}>{personalInfo.email}</Text> : null}
-              {personalInfo?.phone ? <Text style={styles.professionalContactItem}>{personalInfo.phone}</Text> : null}
-              {personalInfo?.location ? <Text style={styles.professionalContactItem}>{personalInfo.location}</Text> : null}
-              {personalInfo?.linkedin ? <Text style={styles.professionalContactItem}>{personalInfo.linkedin.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
-              {personalInfo?.github ? <Text style={styles.professionalContactItem}>{personalInfo.github.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
-              {personalInfo?.portfolio ? <Text style={styles.professionalContactItem}>{personalInfo.portfolio.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
-            </View>
+            {(visibleSections.personalInfo ?? true) && (
+              <View style={styles.professionalContacts}>
+                {personalInfo?.email ? <Text style={styles.professionalContactItem}>{personalInfo.email}</Text> : null}
+                {personalInfo?.phone ? <Text style={styles.professionalContactItem}>{personalInfo.phone}</Text> : null}
+                {personalInfo?.location ? <Text style={styles.professionalContactItem}>{personalInfo.location}</Text> : null}
+                {personalInfo?.linkedin ? <Text style={styles.professionalContactItem}>{personalInfo.linkedin.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
+                {personalInfo?.github ? <Text style={styles.professionalContactItem}>{personalInfo.github.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
+                {personalInfo?.portfolio ? <Text style={styles.professionalContactItem}>{personalInfo.portfolio.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
+              </View>
+            )}
           </View>
-
-          {renderSummary()}
 
           {sectionOrder.map((sectionKey) => (
             <View key={sectionKey}>
@@ -698,17 +703,17 @@ export function ResumePDFDocument({ data }: PDFDocumentProps) {
           <Text style={styles.minimalistName}>{personalInfo?.fullName || 'Your Full Name'}</Text>
           <Text style={styles.minimalistTitle}>{personalInfo?.title || 'Professional Title'}</Text>
           
-          <View style={styles.minimalistContacts}>
-            {personalInfo?.email ? <Text style={styles.minimalistContactItem}>Email: {personalInfo.email}</Text> : null}
-            {personalInfo?.phone ? <Text style={styles.minimalistContactItem}>Phone: {personalInfo.phone}</Text> : null}
-            {personalInfo?.location ? <Text style={styles.minimalistContactItem}>Location: {personalInfo.location}</Text> : null}
-            {personalInfo?.linkedin ? <Text style={styles.minimalistContactItem}>LinkedIn: {personalInfo.linkedin.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
-            {personalInfo?.github ? <Text style={styles.minimalistContactItem}>GitHub: {personalInfo.github.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
-            {personalInfo?.portfolio ? <Text style={styles.minimalistContactItem}>Web: {personalInfo.portfolio.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
-          </View>
+          {(visibleSections.personalInfo ?? true) && (
+            <View style={styles.minimalistContacts}>
+              {personalInfo?.email ? <Text style={styles.minimalistContactItem}>Email: {personalInfo.email}</Text> : null}
+              {personalInfo?.phone ? <Text style={styles.minimalistContactItem}>Phone: {personalInfo.phone}</Text> : null}
+              {personalInfo?.location ? <Text style={styles.minimalistContactItem}>Location: {personalInfo.location}</Text> : null}
+              {personalInfo?.linkedin ? <Text style={styles.minimalistContactItem}>LinkedIn: {personalInfo.linkedin.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
+              {personalInfo?.github ? <Text style={styles.minimalistContactItem}>GitHub: {personalInfo.github.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
+              {personalInfo?.portfolio ? <Text style={styles.minimalistContactItem}>Web: {personalInfo.portfolio.replace(/^https?:\/\/(www\.)?/, '')}</Text> : null}
+            </View>
+          )}
         </View>
-
-        {renderSummary()}
 
         {sectionOrder.map((sectionKey) => (
           <View key={sectionKey}>

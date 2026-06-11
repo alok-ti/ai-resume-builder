@@ -31,6 +31,19 @@ interface Message {
   parts: string;
 }
 
+// Helper to extract plain-text bullet points from HTML
+const extractBullets = (htmlDescription: string): string[] => {
+  if (!htmlDescription) return [];
+  // Find all <li>...</li> occurrences
+  const matches = htmlDescription.match(/<li[^>]*>([\s\S]*?)<\/li>/g);
+  if (matches) {
+    return matches.map(m => m.replace(/<[^>]*>/g, '').trim()).filter(Boolean);
+  }
+  // Fallback: strip tags and return as single item
+  const clean = htmlDescription.replace(/<[^>]*>/g, '').trim();
+  return clean ? [clean] : [];
+};
+
 export function AIPanel() {
   const { setValue, getValues, watch } = useFormContext<ResumeValues>();
   const toast = useToast();
@@ -112,6 +125,50 @@ export function AIPanel() {
 
   const hasImportMetadata = !!watch('importMetadata' as any);
   const importMetadata = watch('importMetadata' as any);
+
+  // AI Quality Audit
+  const [auditResult, setAuditResult] = useState<{
+    grammarIssues: string[];
+    weakBullets: string[];
+    missingAchievements: string[];
+    missingSkills: string[];
+    atsIssues: string[];
+  } | null>(null);
+  const [isAuditLoading, setIsAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
+
+  // Direct AI Rewrite / Repair Tool
+  const [repairSection, setRepairSection] = useState<'summary' | 'experience' | 'project'>('summary');
+  const [selectedExpIdx, setSelectedExpIdx] = useState<number>(0);
+  const [selectedBulletIdx, setSelectedBulletIdx] = useState<number>(0);
+  const [selectedProjIdx, setSelectedProjIdx] = useState<number>(0);
+  const [repairTone, setRepairTone] = useState<'improve' | 'rewrite' | 'expand' | 'shorten' | 'professional' | 'executive' | 'technical'>('improve');
+  const [repairOriginal, setRepairOriginal] = useState('');
+  const [repairSuggestion, setRepairSuggestion] = useState('');
+  const [isRepairLoading, setIsRepairLoading] = useState(false);
+  const [repairError, setRepairError] = useState<string | null>(null);
+
+  const workExperience = watch('workExperience') || [];
+  const projects = watch('projects') || [];
+  const summaryText = watch('personalInfo.summary') || '';
+
+  // Synchronize repairOriginal content
+  useEffect(() => {
+    if (repairSection === 'summary') {
+      setRepairOriginal(summaryText);
+    } else if (repairSection === 'experience') {
+      const exp = workExperience[selectedExpIdx];
+      if (exp) {
+        const bullets = extractBullets(exp.description || '');
+        setRepairOriginal(bullets[selectedBulletIdx] || '');
+      } else {
+        setRepairOriginal('');
+      }
+    } else if (repairSection === 'project') {
+      const proj = projects[selectedProjIdx];
+      setRepairOriginal(proj?.description || '');
+    }
+  }, [repairSection, selectedExpIdx, selectedBulletIdx, selectedProjIdx, workExperience, projects, summaryText]);
 
   // AI Chat Assistant
   const [chatInput, setChatInput] = useState('');
@@ -360,18 +417,7 @@ export function AIPanel() {
     }
   };
 
-  // Helper to extract plain-text bullet points from HTML
-  const extractBullets = (htmlDescription: string): string[] => {
-    if (!htmlDescription) return [];
-    // Find all <li>...</li> occurrences
-    const matches = htmlDescription.match(/<li[^>]*>([\s\S]*?)<\/li>/g);
-    if (matches) {
-      return matches.map(m => m.replace(/<[^>]*>/g, '').trim()).filter(Boolean);
-    }
-    // Fallback: strip tags and return as single item
-    const clean = htmlDescription.replace(/<[^>]*>/g, '').trim();
-    return clean ? [clean] : [];
-  };
+  // Helper extractBullets moved to top level
 
   const handleQuantify = async () => {
     setIsQuantifyLoading(true);
@@ -525,6 +571,108 @@ export function AIPanel() {
     }
   };
 
+  // Run AI Resume Audit Check
+  const handleRunAudit = async () => {
+    setIsAuditLoading(true);
+    setAuditError(null);
+    setAuditResult(null);
+    const loaderToastId = toast.loading('Running AI quality audit on your resume...');
+
+    try {
+      const resumeData = getValues();
+      const response = await fetch('/api/ai?action=audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resumeData })
+      });
+
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+
+      setAuditResult(data);
+      toast.dismiss(loaderToastId);
+      toast.success('Resume quality audit complete!');
+    } catch (err: any) {
+      console.error(err);
+      setAuditError(err.message || 'Failed to perform quality audit.');
+      toast.dismiss(loaderToastId);
+      toast.error('Quality audit failed.');
+    } finally {
+      setIsAuditLoading(false);
+    }
+  };
+
+  // Run AI Direct Repair
+  const handleGenerateRepair = async () => {
+    if (!repairOriginal.trim()) {
+      toast.error('Select a section with content to repair.');
+      return;
+    }
+    setIsRepairLoading(true);
+    setRepairError(null);
+    setRepairSuggestion('');
+    const loaderToastId = toast.loading('Generating AI suggestion...');
+
+    try {
+      const response = await fetch('/api/ai?action=rewrite-in-place', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: repairOriginal,
+          tone: repairTone
+        })
+      });
+
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+
+      setRepairSuggestion(data.text || '');
+      toast.dismiss(loaderToastId);
+      toast.success('AI suggestion generated! You can edit it below.');
+    } catch (err: any) {
+      console.error(err);
+      setRepairError(err.message || 'Failed to generate repair suggestion.');
+      toast.dismiss(loaderToastId);
+      toast.error('AI suggestion generation failed.');
+    } finally {
+      setIsRepairLoading(false);
+    }
+  };
+
+  // Apply repair suggestion to resume
+  const handleAcceptRepair = () => {
+    if (!repairSuggestion.trim()) return;
+
+    if (repairSection === 'summary') {
+      setValue('personalInfo.summary', repairSuggestion, { shouldDirty: true, shouldTouch: true });
+      toast.success('Professional Summary updated!');
+    } else if (repairSection === 'experience') {
+      const exp = workExperience[selectedExpIdx];
+      if (exp) {
+        const bullets = extractBullets(exp.description || '');
+        if (bullets.length === 0) {
+          const formattedHtml = `<ul><li>${repairSuggestion}</li></ul>`;
+          setValue(`workExperience.${selectedExpIdx}.description`, formattedHtml, { shouldDirty: true, shouldTouch: true });
+        } else {
+          bullets[selectedBulletIdx] = repairSuggestion;
+          const formattedHtml = `<ul>${bullets.map(b => `<li>${b}</li>`).join('')}</ul>`;
+          setValue(`workExperience.${selectedExpIdx}.description`, formattedHtml, { shouldDirty: true, shouldTouch: true });
+        }
+        toast.success(`Experience bullet point updated!`);
+      }
+    } else if (repairSection === 'project') {
+      setValue(`projects.${selectedProjIdx}.description`, repairSuggestion, { shouldDirty: true, shouldTouch: true });
+      toast.success(`Project description updated!`);
+    }
+
+    setRepairSuggestion('');
+  };
+
+  // Discard repair suggestion
+  const handleRejectRepair = () => {
+    setRepairSuggestion('');
+    toast.info('Suggestion discarded.');
+  };
 
   const tabsList = [
     { id: 'copilot', label: 'Co-Pilot', icon: <Sparkles className="w-3 h-3" /> },
@@ -532,7 +680,7 @@ export function AIPanel() {
     { id: 'coverletter', label: 'Cover Letter', icon: <FileText className="w-3 h-3" /> },
     { id: 'interview', label: 'Interview Prep', icon: <HelpCircle className="w-3 h-3" /> },
     { id: 'chat', label: 'AI Coach', icon: <MessageSquare className="w-3 h-3" /> },
-    ...(hasImportMetadata ? [{ id: 'repair', label: 'Repair & Compare', icon: <ShieldAlert className="w-3 h-3" /> }] : [])
+    { id: 'repair', label: 'Resume Repair', icon: <ShieldAlert className="w-3 h-3" /> }
   ] as const;
 
   // ==========================================================================
@@ -1062,249 +1210,557 @@ export function AIPanel() {
         {/* ====================================================================
            TAB: REPAIR & COMPARE
            ==================================================================== */}
-        {activeTab === 'repair' && hasImportMetadata && importMetadata && (
+        {/* ====================================================================
+           TAB: RESUME REPAIR
+           ==================================================================== */}
+        {activeTab === 'repair' && (
           <div className="space-y-6 animate-fade-in duration-200">
             
-            {/* ATS Score & KPI Highlights */}
-            <div className="p-4 bg-slate-900/30 border border-slate-900 rounded-2xl flex items-center gap-4">
-              <div className="relative flex items-center justify-center w-14 h-14 rounded-full bg-slate-950 border-2 border-indigo-500 shadow-md">
-                <span className="text-sm font-bold text-white">{importMetadata.recommendations?.atsScore || 70}%</span>
-              </div>
-              <div className="space-y-0.5">
-                <h4 className="text-xs font-bold text-slate-200">AI Estimated ATS Rating</h4>
-                <p className="text-[9px] text-slate-500 leading-relaxed font-light">
-                  Calculated based on extracted resume parameters, core keyword alignment, and parsed section densities.
-                </p>
-              </div>
-            </div>
-
-            {/* AI Recommendations */}
-            <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+            {/* AI Resume Repair Suite: Direct Rewrite & Repair Tool */}
+            <div className="space-y-4 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
               <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                <Sparkles className="w-4 h-4 text-amber-400" />
-                AI Recommendations
-              </h4>
-              
-              {importMetadata.recommendations?.missingKeywords?.length > 0 && (
-                <div className="space-y-1">
-                  <h5 className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Missing Keywords</h5>
-                  <div className="flex flex-wrap gap-1.5 pt-0.5 animate-fade-in">
-                    {importMetadata.recommendations.missingKeywords.map((kw: string, i: number) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => {
-                          const currentSkills = getValues('skills.technicalSkills') || [];
-                          if (!currentSkills.includes(kw)) {
-                            setValue('skills.technicalSkills', [...currentSkills, kw]);
-                            toast.success(`Added '${kw}' to skills!`);
-                          } else {
-                            toast.info(`'${kw}' already added.`);
-                          }
-                        }}
-                        className="group flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:border-indigo-500/50 hover:bg-indigo-500/20 transition-all font-semibold cursor-pointer animate-fade-in"
-                      >
-                        {kw}
-                        <Plus className="w-2.5 h-2.5 text-indigo-500 group-hover:text-indigo-400" />
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {importMetadata.recommendations?.skillGaps?.length > 0 && (
-                <div className="space-y-1 pt-1.5 animate-fade-in">
-                  <h5 className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Detected Skill Gaps</h5>
-                  <div className="flex flex-wrap gap-1.5 pt-0.5">
-                    {importMetadata.recommendations.skillGaps.map((gap: string, i: number) => (
-                      <span key={i} className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 font-semibold">
-                        {gap}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {importMetadata.recommendations?.industryRecommendations?.length > 0 && (
-                <div className="space-y-1.5 pt-2 border-t border-slate-900/60">
-                  <h5 className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Industry Advice</h5>
-                  <ul className="list-disc pl-4 text-[9px] text-slate-300 leading-relaxed space-y-1 font-light">
-                    {importMetadata.recommendations.industryRecommendations.map((rec: string, i: number) => (
-                      <li key={i}>{rec}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            {/* Quality Audit & Repair Checklist */}
-            <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                <ShieldAlert className="w-4 h-4 text-rose-400" />
-                AI Quality Repair Report
+                <Sparkles className="w-4 h-4 text-indigo-400" />
+                AI Direct Repair Tool
               </h4>
               <p className="text-[10px] text-slate-400 leading-relaxed font-light">
-                Checklist of formatting anomalies, spelling/grammar slips, or content structure flaws detected in your uploaded copy.
+                Select any content block or bullet point from your resume, choose an AI action or tone, and rewrite it instantly.
               </p>
 
-              <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
-                {importMetadata.audit?.formattingIssues?.length > 0 && (
-                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
-                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Formatting Issues</span>
-                    <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
-                      {importMetadata.audit.formattingIssues.map((item: string, i: number) => (
-                        <li key={i}>{item}</li>
-                      ))}
-                    </ul>
+              <div className="space-y-3">
+                {/* Select Section */}
+                <div className="space-y-1">
+                  <label className="text-[9px] uppercase font-black tracking-widest text-slate-500 block">Section to Repair</label>
+                  <select
+                    value={repairSection}
+                    onChange={(e) => {
+                      setRepairSection(e.target.value as any);
+                      setSelectedExpIdx(0);
+                      setSelectedBulletIdx(0);
+                      setSelectedProjIdx(0);
+                    }}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="summary">Professional Summary</option>
+                    <option value="experience">Experience Bullet Point</option>
+                    <option value="project">Project Description</option>
+                  </select>
+                </div>
+
+                {/* Conditional dropdowns based on selected section */}
+                {repairSection === 'experience' && workExperience.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2 animate-fade-in">
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-black tracking-widest text-slate-500 block">Experience Item</label>
+                      <select
+                        value={selectedExpIdx}
+                        onChange={(e) => {
+                          setSelectedExpIdx(parseInt(e.target.value));
+                          setSelectedBulletIdx(0);
+                        }}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      >
+                        {workExperience.map((exp, idx) => (
+                          <option key={idx} value={idx}>
+                            {exp.company || `Experience #${idx + 1}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-[9px] uppercase font-black tracking-widest text-slate-500 block">Bullet Point</label>
+                      <select
+                        value={selectedBulletIdx}
+                        onChange={(e) => setSelectedBulletIdx(parseInt(e.target.value))}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      >
+                        {extractBullets(workExperience[selectedExpIdx]?.description || '').map((bullet, idx) => (
+                          <option key={idx} value={idx}>
+                            Bullet #{idx + 1}: {bullet.substring(0, 25)}...
+                          </option>
+                        ))}
+                        {extractBullets(workExperience[selectedExpIdx]?.description || '').length === 0 && (
+                          <option value={0}>No bullets found</option>
+                        )}
+                      </select>
+                    </div>
                   </div>
                 )}
 
-                {importMetadata.audit?.missingInfo?.length > 0 && (
-                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
-                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Missing Information</span>
-                    <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
-                      {importMetadata.audit.missingInfo.map((item: string, i: number) => (
-                        <li key={i}>{item}</li>
+                {repairSection === 'experience' && workExperience.length === 0 && (
+                  <p className="text-[10px] text-rose-400 italic">Please add a Work Experience item first.</p>
+                )}
+
+                {repairSection === 'project' && projects.length > 0 && (
+                  <div className="space-y-1 animate-fade-in">
+                    <label className="text-[9px] uppercase font-black tracking-widest text-slate-500 block">Project Item</label>
+                    <select
+                      value={selectedProjIdx}
+                      onChange={(e) => setSelectedProjIdx(parseInt(e.target.value))}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                    >
+                      {projects.map((proj, idx) => (
+                        <option key={idx} value={idx}>
+                          {proj.projectName || `Project #${idx + 1}`}
+                        </option>
                       ))}
-                    </ul>
+                    </select>
                   </div>
                 )}
 
-                {importMetadata.audit?.weakBullets?.length > 0 && (
-                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
-                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Weak Bullet Points</span>
-                    <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
-                      {importMetadata.audit.weakBullets.map((item: string, i: number) => (
-                        <li key={i}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
+                {repairSection === 'project' && projects.length === 0 && (
+                  <p className="text-[10px] text-rose-400 italic">Please add a Project item first.</p>
                 )}
 
-                {importMetadata.audit?.grammarIssues?.length > 0 && (
-                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
-                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Grammar & Spelling</span>
-                    <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
-                      {importMetadata.audit.grammarIssues.map((item: string, i: number) => (
-                        <li key={i}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                {/* Tone / Action dropdown */}
+                <div className="space-y-1">
+                  <label className="text-[9px] uppercase font-black tracking-widest text-slate-500 block">AI Strategy / Tone</label>
+                  <select
+                    value={repairTone}
+                    onChange={(e) => setRepairTone(e.target.value as any)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  >
+                    <option value="improve">Improve with AI</option>
+                    <option value="rewrite">Rewrite with AI</option>
+                    <option value="expand">Expand content</option>
+                    <option value="shorten">Shorten content</option>
+                    <option value="professional">Professional tone</option>
+                    <option value="executive">Executive tone</option>
+                    <option value="technical">Technical tone</option>
+                  </select>
+                </div>
 
-                {importMetadata.audit?.repetitiveContent?.length > 0 && (
-                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
-                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Repetitive Wording</span>
-                    <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
-                      {importMetadata.audit.repetitiveContent.map((item: string, i: number) => (
-                        <li key={i}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </div>
+                {/* Original Text display */}
+                <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl">
+                  <span className="text-[8px] font-black text-slate-500 uppercase">Original Content:</span>
+                  <p className="text-[10px] text-slate-400 mt-1 leading-relaxed font-light italic whitespace-pre-wrap">
+                    {repairOriginal ? `"${repairOriginal}"` : '(No content found in this section)'}
+                  </p>
+                </div>
 
-            {/* Version Comparison View */}
-            <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
-              <div className="flex justify-between items-center border-b border-slate-850 pb-2">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                  Version Comparison
-                </h4>
-                <select
-                  value={compareSection}
-                  onChange={(e) => setCompareSection(e.target.value as any)}
-                  className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-[10px] text-slate-300 focus:outline-none"
+                {/* Action trigger button */}
+                <button
+                  type="button"
+                  onClick={handleGenerateRepair}
+                  disabled={isRepairLoading || !repairOriginal.trim()}
+                  className="w-full flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl disabled:opacity-40 transition-all cursor-pointer shadow-md"
                 >
-                  <option value="summary">Summary</option>
-                  <option value="experience">Experience</option>
-                  <option value="skills">Skills</option>
-                </select>
+                  {isRepairLoading ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                  Run AI Repair
+                </button>
               </div>
 
-              {/* Compare Summary */}
-              {compareSection === 'summary' && (
-                <div className="space-y-2.5 animate-fade-in">
-                  <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
-                    <span className="text-[8px] font-black text-rose-400/80 uppercase">Original Summary:</span>
-                    <p className="text-[10px] text-slate-500 leading-relaxed font-light italic">
-                      &quot;{importMetadata.originalData?.personalInfo?.summary || 'No summary listed'}&quot;
-                    </p>
-                  </div>
-                  <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
-                    <span className="text-[8px] font-black text-emerald-400 uppercase">Current Summary:</span>
-                    <p className="text-[10px] text-slate-200 leading-relaxed font-light">
-                      &quot;{watch('personalInfo.summary') || 'No summary listed'}&quot;
-                    </p>
+              {repairError && (
+                <p className="text-rose-400 text-[10px] font-medium flex items-center gap-1 mt-2">
+                  <AlertCircle className="w-3.5 h-3.5" /> {repairError}
+                </p>
+              )}
+
+              {/* Editable suggestion text area and Accept/Reject buttons */}
+              {repairSuggestion !== '' && (
+                <div className="mt-4 pt-4 border-t border-slate-800 space-y-3 animate-fade-in">
+                  <label className="text-[9px] uppercase font-black tracking-widest text-indigo-400 block">AI Suggestion (Editable)</label>
+                  <textarea
+                    value={repairSuggestion}
+                    onChange={(e) => setRepairSuggestion(e.target.value)}
+                    rows={4}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500 leading-relaxed font-light resize-y"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={handleAcceptRepair}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl transition-all cursor-pointer shadow-sm"
+                    >
+                      <Check className="w-3.5 h-3.5" /> Accept & Apply
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRejectRepair}
+                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-bold text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-xl transition-all cursor-pointer border border-slate-700/50"
+                    >
+                      <X className="w-3.5 h-3.5" /> Reject Suggestion
+                    </button>
                   </div>
                 </div>
               )}
+            </div>
 
-              {/* Compare Experience */}
-              {compareSection === 'experience' && (
-                <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1 animate-fade-in">
-                  {(importMetadata.originalData?.workExperience || []).map((origExp: any, idx: number) => {
-                    const currentExp = watch(`workExperience.${idx}` as any) as any;
-                    const cleanOrigDesc = (origExp.description || '').replace(/<[^>]*>/g, '').trim();
-                    const cleanCurrDesc = (currentExp?.description || '').replace(/<[^>]*>/g, '').trim();
-                    const isModified = cleanOrigDesc !== cleanCurrDesc;
+            {/* AI Resume Quality Audit Section */}
+            <div className="space-y-4 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                <ShieldAlert className="w-4 h-4 text-indigo-400" />
+                AI Quality Audit
+              </h4>
+              <p className="text-[10px] text-slate-400 leading-relaxed font-light">
+                Analyze your current resume sections for formatting issues, grammatical mistakes, ATS keyword gaps, and missing achievements.
+              </p>
+              
+              {!auditResult ? (
+                <button
+                  type="button"
+                  onClick={handleRunAudit}
+                  disabled={isAuditLoading}
+                  className="w-full flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-bold text-slate-300 bg-slate-900/60 border border-slate-800 hover:bg-slate-800 rounded-xl disabled:opacity-50 transition-all cursor-pointer animate-fade-in"
+                >
+                  {isAuditLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                  Run Quality Audit
+                </button>
+              ) : (
+                <div className="space-y-3.5 pt-1 animate-fade-in">
+                  <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+                    <span className="text-[9px] uppercase font-black tracking-widest text-indigo-400">Audit Results:</span>
+                    <button
+                      type="button"
+                      onClick={() => setAuditResult(null)}
+                      className="text-slate-500 hover:text-white transition-colors"
+                      title="Clear Audit"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
 
-                    return (
-                      <div key={idx} className="space-y-2 border-b border-slate-900 pb-3 last:border-b-0">
-                        <div className="flex justify-between items-center text-[9px] font-extrabold tracking-wide uppercase">
-                          <span className="text-slate-400">{origExp.company} — {origExp.position}</span>
-                          {isModified ? (
-                            <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">Modified</span>
-                          ) : (
-                            <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-850 text-slate-500">Same</span>
-                          )}
-                        </div>
-                        <div className="grid grid-cols-1 gap-2">
-                          <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl">
-                            <span className="text-[8px] font-bold text-slate-500">Original:</span>
-                            <div className="text-[9px] text-slate-500 leading-relaxed font-light mt-1 whitespace-pre-wrap italic">
-                              {cleanOrigDesc}
+                  {/* Grammar Issues Card */}
+                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1.5">
+                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Grammar & Spelling Issues
+                    </span>
+                    {auditResult.grammarIssues.length > 0 ? (
+                      <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-1 font-light">
+                        {auditResult.grammarIssues.map((issue, idx) => (
+                          <li key={idx} className="leading-relaxed">{issue}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-[9px] text-emerald-400 italic font-light pl-1">No visible grammar/spelling errors detected.</p>
+                    )}
+                  </div>
+
+                  {/* Weak Bullet Points Card */}
+                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1.5">
+                    <span className="text-[8px] font-black text-amber-400 uppercase tracking-wider flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" /> Weak Bullet Points
+                    </span>
+                    {auditResult.weakBullets.length > 0 ? (
+                      <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-1 font-light">
+                        {auditResult.weakBullets.map((issue, idx) => (
+                          <li key={idx} className="leading-relaxed">{issue}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-[9px] text-emerald-400 italic font-light pl-1">All bullets look strong and action-oriented.</p>
+                    )}
+                  </div>
+
+                  {/* Missing Achievements Card */}
+                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1.5">
+                    <span className="text-[8px] font-black text-sky-400 uppercase tracking-wider flex items-center gap-1">
+                      <Sparkles className="w-3 h-3" /> Missing Achievements / Metrics
+                    </span>
+                    {auditResult.missingAchievements.length > 0 ? (
+                      <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-1 font-light">
+                        {auditResult.missingAchievements.map((issue, idx) => (
+                          <li key={idx} className="leading-relaxed">{issue}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-[9px] text-emerald-400 italic font-light pl-1">Achievements are well-quantified.</p>
+                    )}
+                  </div>
+
+                  {/* Missing Skills Card */}
+                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1.5">
+                    <span className="text-[8px] font-black text-purple-400 uppercase tracking-wider flex items-center gap-1">
+                      <Brain className="w-3 h-3" /> Suggested / Missing Skills
+                    </span>
+                    {auditResult.missingSkills.length > 0 ? (
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {auditResult.missingSkills.map((sk, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => addSkillToResume('technical', sk)}
+                            className="group flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full bg-slate-900 border border-slate-850 text-slate-300 hover:border-indigo-500/50 hover:text-indigo-400 transition-colors"
+                          >
+                            {sk}
+                            <Plus className="w-2.5 h-2.5 text-slate-500 group-hover:text-indigo-400" />
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[9px] text-emerald-400 italic font-light pl-1">Your skills section covers the targets nicely.</p>
+                    )}
+                  </div>
+
+                  {/* ATS Issues Card */}
+                  <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1.5">
+                    <span className="text-[8px] font-black text-rose-400/90 uppercase tracking-wider flex items-center gap-1">
+                      <ShieldAlert className="w-3 h-3" /> ATS Checklist Issues
+                    </span>
+                    {auditResult.atsIssues.length > 0 ? (
+                      <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-1 font-light">
+                        {auditResult.atsIssues.map((issue, idx) => (
+                          <li key={idx} className="leading-relaxed">{issue}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-[9px] text-emerald-400 italic font-light pl-1">No ATS structure issues detected.</p>
+                    )}
+                  </div>
+
+                </div>
+              )}
+            </div>
+
+            {/* PRESERVED: Original Import Metadata Quality Audit & Repair Checklist */}
+            {hasImportMetadata && importMetadata && (
+              <>
+                {/* ATS Score & KPI Highlights */}
+                <div className="p-4 bg-slate-900/30 border border-slate-900 rounded-2xl flex items-center gap-4">
+                  <div className="relative flex items-center justify-center w-14 h-14 rounded-full bg-slate-950 border-2 border-indigo-500 shadow-md">
+                    <span className="text-sm font-bold text-white">{importMetadata.recommendations?.atsScore || 70}%</span>
+                  </div>
+                  <div className="space-y-0.5">
+                    <h4 className="text-xs font-bold text-slate-200">AI Estimated ATS Rating (Imported Copy)</h4>
+                    <p className="text-[9px] text-slate-500 leading-relaxed font-light">
+                      Calculated based on extracted resume parameters, core keyword alignment, and parsed section densities from the imported resume.
+                    </p>
+                  </div>
+                </div>
+
+                {/* AI Recommendations */}
+                <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    Import Recommendations
+                  </h4>
+                  
+                  {importMetadata.recommendations?.missingKeywords?.length > 0 && (
+                    <div className="space-y-1">
+                      <h5 className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Missing Keywords</h5>
+                      <div className="flex flex-wrap gap-1.5 pt-0.5 animate-fade-in">
+                        {importMetadata.recommendations.missingKeywords.map((kw: string, i: number) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => {
+                              const currentSkills = getValues('skills.technicalSkills') || [];
+                              if (!currentSkills.includes(kw)) {
+                                setValue('skills.technicalSkills', [...currentSkills, kw]);
+                                toast.success(`Added '${kw}' to skills!`);
+                              } else {
+                                toast.info(`'${kw}' already added.`);
+                              }
+                            }}
+                            className="group flex items-center gap-1 text-[9px] px-2 py-0.5 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:border-indigo-500/50 hover:bg-indigo-500/20 transition-all font-semibold cursor-pointer animate-fade-in"
+                          >
+                            {kw}
+                            <Plus className="w-2.5 h-2.5 text-indigo-500 group-hover:text-indigo-400" />
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {importMetadata.recommendations?.skillGaps?.length > 0 && (
+                    <div className="space-y-1 pt-1.5 animate-fade-in">
+                      <h5 className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Detected Skill Gaps</h5>
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {importMetadata.recommendations.skillGaps.map((gap: string, i: number) => (
+                          <span key={i} className="text-[9px] px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-400 font-semibold">
+                            {gap}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {importMetadata.recommendations?.industryRecommendations?.length > 0 && (
+                    <div className="space-y-1.5 pt-2 border-t border-slate-900/60">
+                      <h5 className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Industry Advice</h5>
+                      <ul className="list-disc pl-4 text-[9px] text-slate-300 leading-relaxed space-y-1 font-light">
+                        {importMetadata.recommendations.industryRecommendations.map((rec: string, i: number) => (
+                          <li key={i}>{rec}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quality Audit & Repair Checklist */}
+                <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <ShieldAlert className="w-4 h-4 text-rose-400" />
+                    Import Quality Repair Report
+                  </h4>
+                  <p className="text-[10px] text-slate-400 leading-relaxed font-light">
+                    Checklist of formatting anomalies, spelling/grammar slips, or content structure flaws detected in your uploaded copy.
+                  </p>
+
+                  <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                    {importMetadata.audit?.formattingIssues?.length > 0 && (
+                      <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                        <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Formatting Issues</span>
+                        <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
+                          {importMetadata.audit.formattingIssues.map((item: string, i: number) => (
+                            <li key={i}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {importMetadata.audit?.missingInfo?.length > 0 && (
+                      <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                        <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Missing Information</span>
+                        <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
+                          {importMetadata.audit.missingInfo.map((item: string, i: number) => (
+                            <li key={i}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {importMetadata.audit?.weakBullets?.length > 0 && (
+                      <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                        <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Weak Bullet Points</span>
+                        <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
+                          {importMetadata.audit.weakBullets.map((item: string, i: number) => (
+                            <li key={i}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {importMetadata.audit?.grammarIssues?.length > 0 && (
+                      <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                        <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Grammar & Spelling</span>
+                        <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
+                          {importMetadata.audit.grammarIssues.map((item: string, i: number) => (
+                            <li key={i}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {importMetadata.audit?.repetitiveContent?.length > 0 && (
+                      <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                        <span className="text-[8px] font-black text-rose-400 uppercase tracking-wider">Repetitive Wording</span>
+                        <ul className="list-disc pl-3.5 text-[9px] text-slate-400 space-y-0.5 font-light">
+                          {importMetadata.audit.repetitiveContent.map((item: string, i: number) => (
+                            <li key={i}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Version Comparison View */}
+                <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+                  <div className="flex justify-between items-center border-b border-slate-850 pb-2">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300">
+                      Version Comparison
+                    </h4>
+                    <select
+                      value={compareSection}
+                      onChange={(e) => setCompareSection(e.target.value as any)}
+                      className="bg-slate-950 border border-slate-800 rounded px-2 py-1 text-[10px] text-slate-300 focus:outline-none"
+                    >
+                      <option value="summary">Summary</option>
+                      <option value="experience">Experience</option>
+                      <option value="skills">Skills</option>
+                    </select>
+                  </div>
+
+                  {/* Compare Summary */}
+                  {compareSection === 'summary' && (
+                    <div className="space-y-2.5 animate-fade-in">
+                      <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                        <span className="text-[8px] font-black text-rose-400/80 uppercase">Original Summary:</span>
+                        <p className="text-[10px] text-slate-500 leading-relaxed font-light italic">
+                          &quot;{importMetadata.originalData?.personalInfo?.summary || 'No summary listed'}&quot;
+                        </p>
+                      </div>
+                      <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-1">
+                        <span className="text-[8px] font-black text-emerald-400 uppercase">Current Summary:</span>
+                        <p className="text-[10px] text-slate-200 leading-relaxed font-light">
+                          &quot;{watch('personalInfo.summary') || 'No summary listed'}&quot;
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Compare Experience */}
+                  {compareSection === 'experience' && (
+                    <div className="space-y-3.5 max-h-[350px] overflow-y-auto pr-1 animate-fade-in">
+                      {(importMetadata.originalData?.workExperience || []).map((origExp: any, idx: number) => {
+                        const currentExp = watch(`workExperience.${idx}` as any) as any;
+                        const cleanOrigDesc = (origExp.description || '').replace(/<[^>]*>/g, '').trim();
+                        const cleanCurrDesc = (currentExp?.description || '').replace(/<[^>]*>/g, '').trim();
+                        const isModified = cleanOrigDesc !== cleanCurrDesc;
+
+                        return (
+                          <div key={idx} className="space-y-2 border-b border-slate-900 pb-3 last:border-b-0">
+                            <div className="flex justify-between items-center text-[9px] font-extrabold tracking-wide uppercase">
+                              <span className="text-slate-400">{origExp.company} — {origExp.position}</span>
+                              {isModified ? (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">Modified</span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-850 text-slate-500">Same</span>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-1 gap-2">
+                              <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl">
+                                <span className="text-[8px] font-bold text-slate-500">Original:</span>
+                                <div className="text-[9px] text-slate-500 leading-relaxed font-light mt-1 whitespace-pre-wrap italic">
+                                  {cleanOrigDesc}
+                                </div>
+                              </div>
+                              <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl">
+                                <span className="text-[8px] font-bold text-slate-300">Current:</span>
+                                <div className="text-[9px] text-slate-300 leading-relaxed font-light mt-1 whitespace-pre-wrap">
+                                  {cleanCurrDesc}
+                                </div>
+                              </div>
                             </div>
                           </div>
-                          <div className="p-2.5 bg-slate-950 border border-slate-850 rounded-xl">
-                            <span className="text-[8px] font-bold text-slate-300">Current:</span>
-                            <div className="text-[9px] text-slate-300 leading-relaxed font-light mt-1 whitespace-pre-wrap">
-                              {cleanCurrDesc}
-                            </div>
-                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Compare Skills */}
+                  {compareSection === 'skills' && (
+                    <div className="space-y-3 animate-fade-in">
+                      <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-2">
+                        <span className="text-[8px] font-black text-rose-400/80 uppercase">Original Skills:</span>
+                        <div className="text-[9px] text-slate-500 font-light flex flex-wrap gap-1">
+                          {[(importMetadata.originalData?.skills?.technicalSkills || []), (importMetadata.originalData?.skills?.softSkills || [])].flat().map((s, i) => (
+                            <span key={i} className="px-1.5 py-0.5 bg-slate-900 border border-slate-850 rounded-full">
+                              {s}
+                            </span>
+                          ))}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-
-              {/* Compare Skills */}
-              {compareSection === 'skills' && (
-                <div className="space-y-3 animate-fade-in">
-                  <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-2">
-                    <span className="text-[8px] font-black text-rose-400/80 uppercase">Original Skills:</span>
-                    <div className="text-[9px] text-slate-500 font-light flex flex-wrap gap-1">
-                      {[(importMetadata.originalData?.skills?.technicalSkills || []), (importMetadata.originalData?.skills?.softSkills || [])].flat().map((s, i) => (
-                        <span key={i} className="px-1.5 py-0.5 bg-slate-900 border border-slate-850 rounded-full">
-                          {s}
-                        </span>
-                      ))}
+                      <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-2">
+                        <span className="text-[8px] font-black text-emerald-400 uppercase">Current Skills:</span>
+                        <div className="text-[9px] text-slate-300 font-light flex flex-wrap gap-1">
+                          {[(watch('skills.technicalSkills') || []), (watch('skills.softSkills') || [])].flat().map((s, i) => (
+                            <span key={i} className="px-1.5 py-0.5 bg-slate-900 border border-slate-850 rounded-full">
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="p-3 bg-slate-950 border border-slate-850 rounded-xl space-y-2">
-                    <span className="text-[8px] font-black text-emerald-400 uppercase">Current Skills:</span>
-                    <div className="text-[9px] text-slate-300 font-light flex flex-wrap gap-1">
-                      {[(watch('skills.technicalSkills') || []), (watch('skills.softSkills') || [])].flat().map((s, i) => (
-                        <span key={i} className="px-1.5 py-0.5 bg-slate-900 border border-slate-850 rounded-full">
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
 
           </div>
         )}

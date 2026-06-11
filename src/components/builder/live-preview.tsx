@@ -74,7 +74,7 @@ export function LivePreview({ data }: LivePreviewProps) {
 
   // Render individual sections
   const renderSummary = () => {
-    if (!personalInfo?.summary || !visibleSections.personalInfo) return null;
+    if (!personalInfo?.summary || !(visibleSections.summary ?? true)) return null;
     return (
       <div className="space-y-2">
         <h3 className={`text-xs font-bold uppercase tracking-wider pb-1 border-b ${
@@ -430,6 +430,8 @@ export function LivePreview({ data }: LivePreviewProps) {
       return renderCustomSection(key);
     }
     switch (key) {
+      case 'summary':
+        return renderSummary();
       case 'workExperience':
         return renderExperience();
       case 'education':
@@ -507,10 +509,12 @@ export function LivePreview({ data }: LivePreviewProps) {
                 </p>
               </div>
 
-              <div className="space-y-2 pt-1 border-t border-slate-900">
-                <h4 className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Contact</h4>
-                {renderContactsList('stacked')}
-              </div>
+              {(visibleSections.personalInfo ?? true) && (
+                <div className="space-y-2 pt-1 border-t border-slate-900">
+                  <h4 className="text-[9px] font-bold uppercase tracking-wider text-slate-400">Contact</h4>
+                  {renderContactsList('stacked')}
+                </div>
+              )}
 
               {hasSkills && visibleSections.skills && (
                 <div className="space-y-2">
@@ -564,9 +568,7 @@ export function LivePreview({ data }: LivePreviewProps) {
               )}
             </div>
 
-            {/* Main Area Column */}
             <div className="w-[70%] p-8 flex flex-col gap-6">
-              {renderSummary()}
               {sectionOrder
                 .filter(key => key !== 'skills' && key !== 'certificates')
                 .map((sectionKey) => (
@@ -604,47 +606,47 @@ export function LivePreview({ data }: LivePreviewProps) {
               <p className="text-[10px] font-bold text-indigo-600 mt-1 uppercase tracking-widest font-sans">
                 <EditableText fieldName="personalInfo.title" value={personalInfo?.title || ''} placeholder="Professional Title" />
               </p>
-              <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-[10px] text-slate-500 font-sans">
-                {personalInfo?.email && (
-                  <span className="flex items-center gap-1">
-                    <Mail className="w-3 h-3 text-indigo-400" />
-                    <EditableText fieldName="personalInfo.email" value={personalInfo.email} placeholder="Email" />
-                  </span>
-                )}
-                {personalInfo?.phone && (
-                  <span className="flex items-center gap-1">
-                    <Phone className="w-3 h-3 text-indigo-400" />
-                    <EditableText fieldName="personalInfo.phone" value={personalInfo.phone} placeholder="Phone" />
-                  </span>
-                )}
-                {personalInfo?.location && (
-                  <span className="flex items-center gap-1">
-                    <MapPin className="w-3 h-3 text-indigo-400" />
-                    <EditableText fieldName="personalInfo.location" value={personalInfo.location} placeholder="Location" />
-                  </span>
-                )}
-                {personalInfo?.linkedin && (
-                  <span className="flex items-center gap-1">
-                    <Linkedin className="w-3 h-3 text-indigo-400" />
-                    <EditableText fieldName="personalInfo.linkedin" value={personalInfo.linkedin} placeholder="LinkedIn" />
-                  </span>
-                )}
-                {personalInfo?.github && (
-                  <span className="flex items-center gap-1">
-                    <Github className="w-3 h-3 text-indigo-400" />
-                    <EditableText fieldName="personalInfo.github" value={personalInfo.github} placeholder="GitHub" />
-                  </span>
-                )}
-                {personalInfo?.portfolio && (
-                  <span className="flex items-center gap-1">
-                    <Globe className="w-3 h-3 text-indigo-400" />
-                    <EditableText fieldName="personalInfo.portfolio" value={personalInfo.portfolio} placeholder="Portfolio" />
-                  </span>
-                )}
-              </div>
+              {(visibleSections.personalInfo ?? true) && (
+                <div className="mt-3 flex flex-wrap justify-center gap-x-4 gap-y-1 text-[10px] text-slate-500 font-sans">
+                  {personalInfo?.email && (
+                    <span className="flex items-center gap-1">
+                      <Mail className="w-3 h-3 text-indigo-400" />
+                      <EditableText fieldName="personalInfo.email" value={personalInfo.email} placeholder="Email" />
+                    </span>
+                  )}
+                  {personalInfo?.phone && (
+                    <span className="flex items-center gap-1">
+                      <Phone className="w-3 h-3 text-indigo-400" />
+                      <EditableText fieldName="personalInfo.phone" value={personalInfo.phone} placeholder="Phone" />
+                    </span>
+                  )}
+                  {personalInfo?.location && (
+                    <span className="flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-indigo-400" />
+                      <EditableText fieldName="personalInfo.location" value={personalInfo.location} placeholder="Location" />
+                    </span>
+                  )}
+                  {personalInfo?.linkedin && (
+                    <span className="flex items-center gap-1">
+                      <Linkedin className="w-3 h-3 text-indigo-400" />
+                      <EditableText fieldName="personalInfo.linkedin" value={personalInfo.linkedin} placeholder="LinkedIn" />
+                    </span>
+                  )}
+                  {personalInfo?.github && (
+                    <span className="flex items-center gap-1">
+                      <Github className="w-3 h-3 text-indigo-400" />
+                      <EditableText fieldName="personalInfo.github" value={personalInfo.github} placeholder="GitHub" />
+                    </span>
+                  )}
+                  {personalInfo?.portfolio && (
+                    <span className="flex items-center gap-1">
+                      <Globe className="w-3 h-3 text-indigo-400" />
+                      <EditableText fieldName="personalInfo.portfolio" value={personalInfo.portfolio} placeholder="Portfolio" />
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
-
-            {renderSummary()}
 
             {sectionOrder.map((sectionKey) => (
               <React.Fragment key={sectionKey}>
@@ -679,10 +681,8 @@ export function LivePreview({ data }: LivePreviewProps) {
             <p className="text-xs font-bold text-indigo-600 mt-1.5 uppercase tracking-widest">
               <EditableText fieldName="personalInfo.title" value={personalInfo?.title || ''} placeholder="Professional Title" />
             </p>
-            {renderContactsList('inline')}
+            {(visibleSections.personalInfo ?? true) && renderContactsList('inline')}
           </div>
-
-          {renderSummary()}
 
           {sectionOrder.map((sectionKey) => (
             <React.Fragment key={sectionKey}>

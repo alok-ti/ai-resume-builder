@@ -447,29 +447,53 @@ export async function rewriteInPlace(text: string, tone: string): Promise<string
     console.warn("GEMINI_API_KEY is not configured. Running in Mock Mode for rewrite in place.");
     const cleanText = text.replace(/<[^>]*>/g, '').trim() || 'worked on feature development';
     
-    if (tone === 'technical') {
-      return `Spearheaded software architecture and technical optimizations for ${cleanText}, successfully improving backend throughput by 35% and reducing API response latency.`;
+    switch (tone) {
+      case 'improve':
+        return `Optimized and enhanced ${cleanText} to maximize efficiency, performance, and overall utility.`;
+      case 'rewrite':
+        return `Re-engineered the implementation of ${cleanText} using modern industry design patterns.`;
+      case 'expand':
+        return `Successfully designed, implemented, and refactored ${cleanText}, collaborating with cross-functional stakeholders to deliver robust, scalable, and high-performance solutions.`;
+      case 'shorten':
+        return `Streamlined and optimized ${cleanText} to reduce complexity.`;
+      case 'professional':
+        return `Conducted professional development and maintenance of ${cleanText} in alignment with engineering best practices.`;
+      case 'executive':
+        return `Spearheaded strategic execution of ${cleanText}, driving operational efficiency and key performance outcomes.`;
+      case 'technical':
+        return `Architected and optimized high-performance technical pipelines for ${cleanText}, improving API latency and system scalability.`;
+      default:
+        // fallback matching original general improve
+        return `Designed, architected, and deployed critical updates for ${cleanText}, leading to a 30% increase in system efficiency and performance.`;
     }
-    if (tone === 'leadership') {
-      return `Spearheaded and directed cross-functional team efforts executing ${cleanText}, boosting workflow velocity by 25% and delivering project milestones 2 weeks ahead of schedule.`;
-    }
-    if (tone === 'shorten') {
-      return `Optimized and streamlined ${cleanText} to reduce technical debt.`;
-    }
-    // general improve
-    return `Designed, architected, and deployed critical updates for ${cleanText}, leading to a 30% increase in system efficiency and enhancing overall user retention metrics.`;
   }
 
   const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   let toneGuideline = '';
-  if (tone === 'technical') {
-    toneGuideline = 'Make it highly technical, focus on architectures, systems, frameworks, and engineering concepts.';
-  } else if (tone === 'leadership') {
-    toneGuideline = 'Focus on leadership, ownership, mentoring, cross-functional collaboration, and business value.';
-  } else if (tone === 'shorten') {
-    toneGuideline = 'Keep it concise, punchy, and short without losing key accomplishments.';
-  } else {
-    toneGuideline = 'Improve clarity, use active impact verbs, and format as a strong STAR action-oriented statement.';
+  switch (tone) {
+    case 'improve':
+      toneGuideline = 'Improve clarity, use active impact verbs, and format as a strong STAR action-oriented statement.';
+      break;
+    case 'rewrite':
+      toneGuideline = 'Rewrite the text completely to improve phrasing, structure, and readability while preserving the core meaning.';
+      break;
+    case 'expand':
+      toneGuideline = 'Expand the content to add more detail, depth, and context about the achievement and its impact.';
+      break;
+    case 'shorten':
+      toneGuideline = 'Keep it concise, punchy, and short, removing fluff without losing key accomplishments.';
+      break;
+    case 'professional':
+      toneGuideline = 'Make it sound highly professional, polished, and suited for a corporate setting.';
+      break;
+    case 'executive':
+      toneGuideline = 'Focus on leadership, ownership, strategic impact, business outcomes, and high-level results.';
+      break;
+    case 'technical':
+      toneGuideline = 'Make it highly technical, focusing on tools, technologies, architecture, systems, and engineering metrics.';
+      break;
+    default:
+      toneGuideline = 'Improve clarity, use active impact verbs, and format as a strong action-oriented statement.';
   }
 
   const prompt = `
@@ -744,5 +768,82 @@ function generateMockParsedResume(rawText: string): any {
     certificates: [],
     languages: []
   };
+}
+
+/**
+ * Audit Resume for Grammar, Weak Bullets, Missing Achievements, Missing Skills, and ATS Issues
+ */
+export async function auditResume(resumeData: any): Promise<{
+  grammarIssues: string[];
+  weakBullets: string[];
+  missingAchievements: string[];
+  missingSkills: string[];
+  atsIssues: string[];
+}> {
+  if (!apiKey) {
+    console.warn("GEMINI_API_KEY is not configured. Running in Mock Mode for resume audit.");
+    return {
+      grammarIssues: [
+        "Inconsistent capitalization detected in work experience description.",
+        "Ensure bullet points start with past-tense action verbs (e.g. 'Led' instead of 'Leading')."
+      ],
+      weakBullets: [
+        "Bullet point 'worked on features' is generic. Use the STAR method to describe Situation, Task, Action, and Result.",
+        "Bullet point 'helped team members' lacks specificity. Describe how you mentored or supported the team."
+      ],
+      missingAchievements: [
+        "No quantifiable metrics or performance indicators found in the most recent job description.",
+        "Missing outcomes for projects. Consider adding user growth, response times, or cost reduction percentages."
+      ],
+      missingSkills: [
+        "No modern testing tools (e.g., Jest, Cypress, Playwright) listed under technical skills.",
+        "Consider adding cloud platform competencies (e.g., AWS, GCP, Azure) to complement your engineering title."
+      ],
+      atsIssues: [
+        "Missing clear contact information link (LinkedIn/GitHub) in header.",
+        "Inconsistent section header formatting might cause parsing issues with legacy ATS systems."
+      ]
+    };
+  }
+
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const prompt = `
+    Act as a professional resume auditor. Analyze the following resume data to detect:
+    1. Grammar issues: Spelling mistakes, incorrect tense usage, run-on sentences, formatting slips.
+    2. Weak bullet points: Bullet points that are passive, generic, or don't clearly explain what the candidate did.
+    3. Missing achievements: Areas where achievements could be quantified (e.g. missing metrics, dollar amounts, performance percentages).
+    4. Missing skills: Crucial technical or soft skills that would naturally fit the candidate's target job title but are missing.
+    5. ATS issues: ATS parsing blocks, lack of search keyword optimization, structure/layout problems, missing links.
+
+    Resume Data:
+    ${JSON.stringify(resumeData)}
+
+    Provide your output ONLY as a valid JSON object matching this structure:
+    {
+      "grammarIssues": ["Issue 1", "Issue 2"],
+      "weakBullets": ["Issue 1", "Issue 2"],
+      "missingAchievements": ["Issue 1", "Issue 2"],
+      "missingSkills": ["Issue 1", "Issue 2"],
+      "atsIssues": ["Issue 1", "Issue 2"]
+    }
+    
+    Ensure your response is valid JSON. Do not wrap in markdown code blocks. Return ONLY the raw JSON string.
+  `;
+
+  try {
+    const result = await model.generateContent(prompt);
+    const outputText = result.response.text().trim();
+    const cleanJson = outputText.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+    return JSON.parse(cleanJson);
+  } catch (err) {
+    console.error('Failed to parse audit results from AI, falling back to mock details:', err);
+    return {
+      grammarIssues: ["Spelling or grammar checks failed to run. Check formatting manually."],
+      weakBullets: ["Ensure all bullets follow the STAR format (Situation, Task, Action, Result)."],
+      missingAchievements: ["Try to add metrics like % optimization or headcount managed to your bullets."],
+      missingSkills: ["Review the job description to ensure all required tools and skills are present."],
+      atsIssues: ["Verify standard section titles (Experience, Education, Skills) are spelled correctly."]
+    };
+  }
 }
 

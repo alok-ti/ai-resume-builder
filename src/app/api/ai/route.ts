@@ -10,7 +10,8 @@ import {
   chatAssistant,
   rewriteInPlace,
   quantifyAchievements,
-  generateInterviewPrep
+  generateInterviewPrep,
+  auditResume
 } from '@/lib/gemini';
 
 export async function POST(request: Request) {
@@ -116,6 +117,15 @@ export async function POST(request: Request) {
       const { resumeData, jobDescription = '' } = body;
       const questions = await generateInterviewPrep(resumeData, jobDescription);
       return NextResponse.json({ questions });
+    }
+
+    // ==========================================
+    // 12. AI RESUME AUDIT ACTION
+    // ==========================================
+    if (action === 'audit') {
+      const { resumeData } = body;
+      const auditReport = await auditResume(resumeData);
+      return NextResponse.json(auditReport);
     }
 
     return NextResponse.json({ error: 'Invalid action parameter' }, { status: 400 });

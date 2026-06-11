@@ -124,6 +124,17 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
   const [allResumes, setAllResumes] = useState<any[]>([]);
   const [isVersionsMenuOpen, setIsVersionsMenuOpen] = useState(false);
   const [isDuplicatingVersion, setIsDuplicatingVersion] = useState(false);
+  const [isAddSectionMenuOpen, setIsAddSectionMenuOpen] = useState(false);
+
+  const allStandardSections = [
+    { key: 'summary', label: 'Summary' },
+    { key: 'workExperience', label: 'Experience' },
+    { key: 'education', label: 'Education' },
+    { key: 'projects', label: 'Projects' },
+    { key: 'skills', label: 'Skills' },
+    { key: 'certificates', label: 'Certifications' },
+    { key: 'achievements', label: 'Achievements' },
+  ];
 
   // Preview Zoom State
   const [zoomScale, setZoomScale] = useState<number>(1.0);
@@ -428,7 +439,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
     toast.success('Snapshot deleted.');
   };
 
-  // Custom Sections creation and deletion
+  // Sections creation and deletion
   const handleAddCustomSection = () => {
     const customId = `custom_${Math.random().toString(36).substr(2, 9)}`;
     const currentOrder = [...(formData.sectionOrder || initialOrder)];
@@ -446,22 +457,37 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
     setValue('customSections', updatedCustom, { shouldDirty: true });
     
     setActiveSection(customId);
+    setIsAddSectionMenuOpen(false);
     toast.success('Custom section created!');
   };
 
-  const handleDeleteCustomSection = (customId: string) => {
+  const handleDeleteSection = (secKey: string) => {
     const currentOrder = [...(formData.sectionOrder || initialOrder)];
-    const filteredOrder = currentOrder.filter(key => key !== customId);
+    const filteredOrder = currentOrder.filter(key => key !== secKey);
     setValue('sectionOrder', filteredOrder, { shouldDirty: true });
     
-    const updatedCustom = { ...(formData.customSections || {}) };
-    delete updatedCustom[customId];
-    setValue('customSections', updatedCustom, { shouldDirty: true });
+    if (secKey.startsWith('custom_')) {
+      const updatedCustom = { ...(formData.customSections || {}) };
+      delete updatedCustom[secKey];
+      setValue('customSections', updatedCustom, { shouldDirty: true });
+    }
     
-    if (activeSection === customId) {
+    if (activeSection === secKey) {
       setActiveSection(filteredOrder[0] || 'personalInfo');
     }
-    toast.success('Custom section deleted!');
+    toast.success('Section deleted!');
+  };
+
+  const handleAddStandardSection = (secKey: string) => {
+    const currentOrder = [...(formData.sectionOrder || initialOrder)];
+    if (!currentOrder.includes(secKey)) {
+      currentOrder.push(secKey);
+      setValue('sectionOrder', currentOrder, { shouldDirty: true });
+    }
+    setValue(`visibleSections.${secKey}` as any, true, { shouldDirty: true });
+    setActiveSection(secKey);
+    setIsAddSectionMenuOpen(false);
+    toast.success(`${sectionLabels[secKey] || secKey} section added!`);
   };
 
   const baseResumeId = initialData?.resume_data?.parentResumeId || initialData?.id;
@@ -1200,7 +1226,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
                             setValue(`visibleSections.${secKey as keyof typeof formData.visibleSections}`, !isVisible);
                             toast.info(`${label} visibility updated!`);
                           }}
-                          onDelete={secKey.startsWith('custom_') ? () => handleDeleteCustomSection(secKey) : undefined}
+                          onDelete={secKey !== 'personalInfo' ? () => handleDeleteSection(secKey) : undefined}
                         />
                       );
                     })}
@@ -1208,18 +1234,56 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
                 </SortableContext>
               </DndContext>
 
-              <button
-                type="button"
-                onClick={handleAddCustomSection}
-                className={`w-full mt-4 flex items-center justify-center gap-1.5 py-2 text-xxs font-bold uppercase tracking-wider rounded-xl border transition-all ${
-                  workspaceTheme === 'dark'
-                    ? 'border-dashed border-slate-800 text-slate-400 hover:border-indigo-500/50 hover:text-indigo-400 bg-slate-950 hover:bg-indigo-950/10'
-                    : 'border-dashed border-slate-200 text-slate-500 hover:border-indigo-500/50 hover:text-indigo-600 bg-white hover:bg-indigo-50/10'
-                }`}
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Add Custom Section
-              </button>
+              {/* Add Section Dropdown */}
+              <div className="relative mt-4">
+                <button
+                  type="button"
+                  onClick={() => setIsAddSectionMenuOpen(!isAddSectionMenuOpen)}
+                  className={`w-full flex items-center justify-center gap-1.5 py-2 text-xxs font-bold uppercase tracking-wider rounded-xl border transition-all ${
+                    workspaceTheme === 'dark'
+                      ? 'border-dashed border-slate-800 text-slate-400 hover:border-indigo-500/50 hover:text-indigo-400 bg-slate-950 hover:bg-indigo-950/10'
+                      : 'border-dashed border-slate-200 text-slate-500 hover:border-indigo-500/50 hover:text-indigo-600 bg-white hover:bg-indigo-50/10'
+                  }`}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Section
+                </button>
+                {isAddSectionMenuOpen && (
+                  <div className={`absolute bottom-full left-0 mb-2 w-full rounded-2xl shadow-2xl border p-1.5 z-50 animate-fade-in ${
+                    workspaceTheme === 'dark' ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-900'
+                  }`}>
+                    <div className="px-2.5 py-1.5 border-b border-slate-800/40 mb-1">
+                      <span className="text-[9px] font-bold text-slate-500 uppercase tracking-wider">Available Sections</span>
+                    </div>
+                    <div className="max-h-48 overflow-y-auto space-y-0.5">
+                      {allStandardSections
+                        .filter(sec => !formData.sectionOrder?.includes(sec.key))
+                        .map((sec) => (
+                          <button
+                            key={sec.key}
+                            type="button"
+                            onClick={() => handleAddStandardSection(sec.key)}
+                            className={`w-full text-left block px-3 py-1.5 text-xs rounded-xl transition-all font-semibold ${
+                              workspaceTheme === 'dark'
+                                ? 'text-slate-300 hover:bg-slate-800 hover:text-white'
+                                : 'text-slate-700 hover:bg-slate-100 hover:text-slate-950'
+                            }`}
+                          >
+                            {sec.label}
+                          </button>
+                        ))}
+                      
+                      <button
+                        type="button"
+                        onClick={handleAddCustomSection}
+                        className={`w-full text-left block px-3 py-1.5 text-xs rounded-xl transition-all font-bold text-indigo-400 hover:bg-indigo-500/10`}
+                      >
+                        + Custom Section
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className={`p-4 border-t ${workspaceTheme === 'dark' ? 'border-slate-900' : 'border-slate-200'}`}>

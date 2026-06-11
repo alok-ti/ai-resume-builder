@@ -14,41 +14,66 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
-    const formData = await request.formData();
-    const file = formData.get('file') as File;
-
-    if (!file) {
-      return NextResponse.json({ error: 'No resume file uploaded' }, { status: 400 });
-    }
-
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const fileType = file.name.split('.').pop()?.toLowerCase();
-    
+    const contentType = request.headers.get('content-type') || '';
     let rawText = '';
-    
-    // 1. Text Extraction phase based on file extension
-    try {
-      if (fileType === 'txt') {
-        rawText = buffer.toString('utf-8');
-      } else if (fileType === 'docx') {
-        const result = await mammoth.extractRawText({ buffer });
-        rawText = result.value;
-      } else if (fileType === 'pdf') {
-        const pdfParseModule = (await import('pdf-parse')) as any;
-        const pdf = pdfParseModule.default || pdfParseModule;
-        const data = await pdf(buffer);
-        rawText = data.text;
-      } else {
-        return NextResponse.json({ error: 'Unsupported file extension. Please upload a PDF, DOCX or TXT file.' }, { status: 400 });
+    let title = 'Imported Resume';
+    let resumeId: string | null = null;
+    let fileType = '';
+    let parsingStatus = 'success';
+
+    if (contentType.includes('application/json')) {
+      try {
+        const body = await request.json();
+        rawText = body.text || '';
+        resumeId = body.resumeId || null;
+        title = body.title || 'Pasted Resume';
+        fileType = 'txt';
+      } catch (err) {
+        console.error('JSON parsing error:', err);
+        parsingStatus = 'failed';
       }
-    } catch (parseError: any) {
-      console.error('Document parsing error:', parseError);
-      return NextResponse.json({ error: `Failed to extract text from file: ${parseError.message || parseError}` }, { status: 500 });
+    } else {
+      try {
+        const formData = await request.formData();
+        const file = formData.get('file') as File;
+        resumeId = (formData.get('resumeId') as string) || null;
+
+        if (file) {
+          const cleanFileName = file.name.replace(/\.[^/.]+$/, ""); // strip extension
+          title = `Imported Resume - ${cleanFileName}`;
+          const arrayBuffer = await file.arrayBuffer();
+          const buffer = Buffer.from(arrayBuffer);
+          fileType = file.name.split('.').pop()?.toLowerCase() || '';
+
+          try {
+            if (fileType === 'txt') {
+              rawText = buffer.toString('utf-8');
+            } else if (fileType === 'docx') {
+              const result = await mammoth.extractRawText({ buffer });
+              rawText = result.value;
+            } else if (fileType === 'pdf') {
+              const pdfParseModule = (await import('pdf-parse')) as any;
+              const pdf = pdfParseModule.default || pdfParseModule;
+              const data = await pdf(buffer);
+              rawText = data.text;
+            } else {
+              parsingStatus = 'failed';
+            }
+          } catch (parseError: any) {
+            console.error('Document parsing error:', parseError);
+            parsingStatus = 'failed';
+          }
+        } else {
+          parsingStatus = 'failed';
+        }
+      } catch (err) {
+        console.error('FormData parsing error:', err);
+        parsingStatus = 'failed';
+      }
     }
 
     if (!rawText || rawText.trim().length < 50) {
-      return NextResponse.json({ error: 'Successfully read file, but extracted text content is too short to parse.' }, { status: 400 });
+      parsingStatus = 'failed';
     }
 
     // 2. Fetch profile to prefill contact information
@@ -59,17 +84,20 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     // 3. Parse resume content using Gemini (or mock fallback)
-    let parsedData;
-    try {
-      parsedData = await parseResume(rawText);
-    } catch (parseErr: any) {
-      console.error('Failed parsing resume text:', parseErr);
-      parsedData = null;
+    let parsedData = null;
+    if (parsingStatus !== 'failed' && rawText) {
+      try {
+        parsedData = await parseResume(rawText);
+        if (!parsedData) {
+          parsingStatus = 'failed';
+        }
+      } catch (parseErr: any) {
+        console.error('Failed parsing resume text:', parseErr);
+        parsingStatus = 'failed';
+      }
     }
 
     const templateId = 'modern-minimalist';
-    const cleanFileName = file.name.replace(/\.[^/.]+$/, ""); // strip extension
-    const title = `Imported Resume - ${cleanFileName}`;
 
     // Helper to validate URLs
     const cleanUrl = (url: any): string => {
@@ -231,27 +259,43 @@ export async function POST(request: Request) {
       status: 'draft',
     };
 
-    const { data: newResume, error: insertError } = await supabase
-      .from('resumes')
-      .insert({
-        user_id: user.id,
-        title,
-        template_id: templateId,
-        version_type: 'original',
-        resume_data: resumeData,
-      })
-      .select('id')
-      .single();
+    let targetResumeId = resumeId;
+    if (targetResumeId) {
+      const { error: updateError } = await supabase
+        .from('resumes')
+        .update({
+          title,
+          resume_data: resumeData,
+        })
+        .eq('id', targetResumeId);
 
-    if (insertError || !newResume) {
-      console.error('Error inserting imported resume:', insertError);
-      return NextResponse.json({ error: `Failed to save resume: ${insertError?.message || 'Database error'}` }, { status: 500 });
+      if (updateError) {
+        console.error('Error updating resume in retry flow:', updateError);
+        return NextResponse.json({ error: `Failed to save resume: ${updateError.message}` }, { status: 500 });
+      }
+    } else {
+      const { data: newResume, error: insertError } = await supabase
+        .from('resumes')
+        .insert({
+          user_id: user.id,
+          title,
+          template_id: templateId,
+          resume_data: resumeData,
+        })
+        .select('id')
+        .single();
+
+      if (insertError || !newResume) {
+        console.error('Error inserting imported resume:', insertError);
+        return NextResponse.json({ error: `Failed to save resume: ${insertError?.message || 'Database error'}` }, { status: 500 });
+      }
+      targetResumeId = newResume.id;
     }
 
     // Call save_complete_resume RPC to sync relational tables
     try {
       const { error: rpcError } = await supabase.rpc('save_complete_resume', {
-        p_resume_id: newResume.id,
+        p_resume_id: targetResumeId,
         p_title: title,
         p_template_id: templateId,
         p_resume_data: resumeData,
@@ -294,7 +338,8 @@ export async function POST(request: Request) {
     revalidatePath('/dashboard');
     return NextResponse.json({
       success: true,
-      resumeId: newResume.id
+      resumeId: targetResumeId,
+      parsingStatus
     });
   } catch (error: any) {
     console.error('Resume import route error:', error);
