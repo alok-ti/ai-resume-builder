@@ -34,6 +34,8 @@ export async function createCoverLetter(payload: {
   companyName: string;
   jobTitle: string;
   letterBody: string;
+  style?: string;
+  tone?: string;
 }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -74,6 +76,8 @@ export async function updateCoverLetter(id: string, payload: {
   companyName?: string;
   jobTitle?: string;
   letterBody?: string;
+  style?: string;
+  tone?: string;
 }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -127,4 +131,47 @@ export async function deleteCoverLetter(id: string) {
 
   revalidatePath('/dashboard');
   return { success: true };
+}
+
+export async function duplicateCoverLetter(id: string) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect('/login');
+  }
+
+  const { data: original, error: fetchError } = await supabase
+    .from('cover_letters')
+    .select('*')
+    .eq('id', id)
+    .eq('user_id', user.id)
+    .single();
+
+  if (fetchError || !original) {
+    return { success: false, error: 'Cover letter not found' };
+  }
+
+  const { data: newLetter, error: insertError } = await supabase
+    .from('cover_letters')
+    .insert({
+      user_id: user.id,
+      resume_id: original.resume_id || null,
+      title: `${original.title} (Copy)`,
+      recipient_name: original.recipient_name || '',
+      recipient_title: original.recipient_title || '',
+      company_name: original.company_name,
+      job_title: original.job_title,
+      letter_body: original.letter_body,
+    })
+    .select('id')
+    .single();
+
+  if (insertError || !newLetter) {
+    console.error('Error duplicating cover letter:', insertError);
+    return { success: false, error: insertError?.message || 'Duplication failed' };
+  }
+
+  revalidatePath('/dashboard');
+  return { success: true, id: newLetter.id };
 }

@@ -4,14 +4,21 @@ import {
   rewriteExperience,
   suggestSkills,
   generateCoverLetter,
+  generateCoverLetterAdvanced,
+  rewriteCoverLetter,
+  improveCoverLetter,
   checkAtsScore,
   tailorResume,
+  tailorResumeAdvanced,
   analyzeResume,
   chatAssistant,
   rewriteInPlace,
   quantifyAchievements,
   generateInterviewPrep,
-  auditResume
+  auditResume,
+  improveEntireResume,
+  chatAssistantStream,
+  generateCareerAssistantContent
 } from '@/lib/gemini';
 
 export async function POST(request: Request) {
@@ -48,11 +55,49 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 4. COVER LETTER GENERATOR ACTION
+    // 4. COVER LETTER GENERATOR ACTION (Legacy + Advanced)
     // ==========================================
     if (action === 'cover-letter') {
-      const { resumeData, jobDescription = '' } = body;
-      const coverLetter = await generateCoverLetter(resumeData, jobDescription);
+      const {
+        resumeData,
+        jobDescription = '',
+        style = 'professional',
+        tone = 'confident',
+        companyName = '',
+        jobTitle = '',
+        hiringManagerName = '',
+        hiringManagerTitle = '',
+        companyPersonalization = '',
+        wordCount = 280,
+      } = body;
+      const coverLetter = await generateCoverLetterAdvanced(resumeData, jobDescription, {
+        style,
+        tone,
+        companyName,
+        jobTitle,
+        hiringManagerName,
+        hiringManagerTitle,
+        companyPersonalization,
+        wordCount,
+      });
+      return NextResponse.json({ coverLetter });
+    }
+
+    // ==========================================
+    // 4b. COVER LETTER REWRITE ACTION
+    // ==========================================
+    if (action === 'cover-letter-rewrite') {
+      const { letter = '', instruction = '' } = body;
+      const coverLetter = await rewriteCoverLetter(letter, instruction);
+      return NextResponse.json({ coverLetter });
+    }
+
+    // ==========================================
+    // 4c. COVER LETTER IMPROVE ACTION
+    // ==========================================
+    if (action === 'cover-letter-improve') {
+      const { letter = '' } = body;
+      const coverLetter = await improveCoverLetter(letter);
       return NextResponse.json({ coverLetter });
     }
 
@@ -75,12 +120,33 @@ export async function POST(request: Request) {
     }
 
     // ==========================================
-    // 7. RESUME TAILORING ACTION
+    // 7. RESUME TAILORING ACTION (Legacy)
     // ==========================================
     if (action === 'tailor') {
       const { resumeData, jobDescription = '' } = body;
       const tailoring = await tailorResume(resumeData, jobDescription);
       return NextResponse.json(tailoring);
+    }
+
+    // ==========================================
+    // 7b. ADVANCED RESUME TAILORING ACTION
+    // ==========================================
+    if (action === 'tailor-advanced') {
+      const {
+        resumeData,
+        jobDescription = '',
+        industry = 'general',
+        seniority = 'mid',
+        tone = 'professional',
+        prioritizeSkills = [],
+      } = body;
+      const result = await tailorResumeAdvanced(resumeData, jobDescription, {
+        industry,
+        seniority,
+        tone,
+        prioritizeSkills,
+      });
+      return NextResponse.json(result);
     }
 
     // ==========================================
@@ -126,6 +192,42 @@ export async function POST(request: Request) {
       const { resumeData } = body;
       const auditReport = await auditResume(resumeData);
       return NextResponse.json(auditReport);
+    }
+
+    // ==========================================
+    // 13. AI RESUME IMPROVE ACTION
+    // ==========================================
+    if (action === 'improve-resume') {
+      const { resumeData } = body;
+      const improvedResume = await improveEntireResume(resumeData);
+      return NextResponse.json({ improvedResume });
+    }
+
+    // ==========================================
+    // 14. AI CHAT STREAMING COACH ACTION
+    // ==========================================
+    if (action === 'chat-stream') {
+      const { message = '', history = [], resumeData } = body;
+      const stream = await chatAssistantStream(message, history, resumeData);
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Transfer-Encoding': 'chunked',
+        }
+      });
+    }
+
+    // ==========================================
+    // 15. AI CAREER ASSISTANT SUITE ACTIONS
+    // ==========================================
+    if (action === 'career-assistant') {
+      const { type = '', resumeData, targetRole = '', jobDescription = '', input = '' } = body;
+      const result = await generateCareerAssistantContent(type, resumeData, {
+        targetRole,
+        jobDescription,
+        input
+      });
+      return NextResponse.json(result);
     }
 
     return NextResponse.json({ error: 'Invalid action parameter' }, { status: 400 });

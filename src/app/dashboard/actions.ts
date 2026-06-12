@@ -3,6 +3,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
+import { logger } from '@/lib/logger';
 
 export async function createResume(templateId: string = 'modern-minimalist', title: string = 'My Professional Resume') {
   const supabase = await createClient();
@@ -22,7 +23,7 @@ export async function createResume(templateId: string = 'modern-minimalist', tit
     .eq('user_id', user.id)
     .maybeSingle();
 
-  console.log('Inserting resume into database for user:', user.id);
+  logger.db('createResume', 'Inserting resume into database for user', { userId: user.id });
   
   try {
     const response = await supabase
@@ -77,19 +78,19 @@ export async function createResume(templateId: string = 'modern-minimalist', tit
       .select('id')
       .single();
 
-    console.log('Supabase insert response:', JSON.stringify(response, null, 2));
+    logger.db('createResume', 'Supabase insert response', response);
 
     const { data: newResume, error } = response;
 
     if (error || !newResume) {
-      console.error('Error creating resume record in DB:', error);
+      logger.error('createResume', 'Error creating resume record in DB', error);
       return { success: false, error: error?.message || 'Failed to create resume record in database' };
     }
 
     revalidatePath('/dashboard');
     return { success: true, id: newResume.id };
   } catch (err: any) {
-    console.error('Unexpected exception during resume creation:', err);
+    logger.error('createResume', 'Unexpected exception during resume creation', err);
     return { success: false, error: err?.message || 'An unexpected error occurred on the server' };
   }
 }
@@ -128,7 +129,7 @@ function serverHtmlToBullets(html: string): string[] {
   return html.replace(/<[^>]*>/g, '').split('\n').map(s => s.trim()).filter(Boolean);
 }
 
-export async function duplicateResume(resumeId: string, titleSuffix: string = 'Copy', parentResumeId?: string) {
+export async function duplicateResume(resumeId: string, titleSuffix: string = 'Copy', parentResumeId?: string, versionType: string = 'edited') {
   const supabase = await createClient();
 
   const {
@@ -175,6 +176,8 @@ export async function duplicateResume(resumeId: string, titleSuffix: string = 'C
         title: newTitle,
         template_id: original.template_id,
         resume_data: clonedData,
+        parent_id: parentResumeId || original.resume_data?.parentResumeId || original.id,
+        version_type: versionType,
       })
       .select('id')
       .single();

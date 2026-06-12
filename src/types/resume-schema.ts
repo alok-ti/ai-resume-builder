@@ -96,7 +96,7 @@ export const resumeSchema = z.object({
   skills: skillsSchema,
   certificates: z.array(certificateItemSchema),
   achievements: z.array(achievementItemSchema),
-  templateId: z.enum(['modern-minimalist', 'professional', 'executive']),
+  templateId: z.enum(['modern-minimalist', 'professional', 'executive', 'ats', 'tech', 'modern', 'minimal', 'creative']),
   sectionOrder: z.array(z.string()),
   visibleSections: visibleSectionsSchema,
   customSections: z.record(z.string(), customSectionSchema).optional(),
@@ -106,6 +106,10 @@ export const resumeSchema = z.object({
     timestamp: z.string(),
     label: z.string(),
     data: z.any(),
+  })).optional(),
+  chatHistory: z.array(z.object({
+    role: z.enum(['user', 'model']),
+    parts: z.string(),
   })).optional(),
 });
 

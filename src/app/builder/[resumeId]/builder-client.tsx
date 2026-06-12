@@ -43,14 +43,33 @@ import {
   ZoomIn,
   ZoomOut,
   X,
-  FileText
+  FileText,
+  GitPullRequest,
+  Sparkles,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import { ResumePDFDocument } from '@/components/builder/pdf-document';
-import { AIPanel } from '@/components/builder/ai-panel';
 import { generateDocxBlob } from '@/lib/docx-exporter';
 import Link from 'next/link';
 import { ToastProvider, useToast } from '@/components/ui/toast';
+import { getResumeDifferences, ResumeDifference } from '@/lib/diff';
+import { motion, AnimatePresence } from 'framer-motion';
+import dynamic from 'next/dynamic';
+
+const AIPanel = dynamic(() => import('@/components/builder/ai-panel').then(m => m.AIPanel), {
+  loading: () => (
+    <div className="flex items-center justify-center h-48">
+      <Loader2 className="w-6 h-6 text-indigo-500 animate-spin" />
+    </div>
+  ),
+  ssr: false,
+});
+
+const CommandPalette = dynamic(() => import('@/components/builder/command-palette').then(m => m.CommandPalette), {
+  ssr: false,
+});
 
 // DND Kit Imports
 import {
@@ -113,6 +132,66 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
   const [isAiOpen, setIsAiOpen] = useState(false);
   const [workspaceTheme, setWorkspaceTheme] = useState<'dark' | 'light'>('dark');
   const [resumeStatus, setResumeStatus] = useState<'draft' | 'completed'>(initialData?.resume_data?.status || 'draft');
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+
+  // Timer references for debounced functions to prevent race conditions and leaks
+  const autosaveTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const historyTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Command Palette Keyboard Listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Sync workspace Theme with document elements
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme') as 'dark' | 'light' || 'dark';
+    setWorkspaceTheme(savedTheme);
+    if (savedTheme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, []);
+
+  const handleToggleTheme = () => {
+    const nextTheme = workspaceTheme === 'dark' ? 'light' : 'dark';
+    setWorkspaceTheme(nextTheme);
+    localStorage.setItem('theme', nextTheme);
+    if (nextTheme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+    toast.success(`Switched to ${nextTheme} theme!`);
+  };
+
+  const handleExportPdf = async () => {
+    toast.info('Preparing PDF document...');
+    try {
+      const { pdf } = await import('@react-pdf/renderer');
+      const blob = await pdf(<ResumePDFDocument data={formData} />).toBlob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${(formData.personalInfo?.fullName || 'My_Resume').replace(/\s+/g, '_')}_Resume.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.success('PDF downloaded successfully!');
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to generate PDF.');
+    }
+  };
 
   // Undo & Redo History Stack State
   const [pastStates, setPastStates] = useState<any[]>([]);
@@ -125,6 +204,12 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
   const [isVersionsMenuOpen, setIsVersionsMenuOpen] = useState(false);
   const [isDuplicatingVersion, setIsDuplicatingVersion] = useState(false);
   const [isAddSectionMenuOpen, setIsAddSectionMenuOpen] = useState(false);
+
+  // Compare Mode State
+  const [isCompareActive, setIsCompareActive] = useState(false);
+  const [compareBaseId, setCompareBaseId] = useState<string>('');
+  const [comparedData, setComparedData] = useState<any>(null);
+  const [isAiImproving, setIsAiImproving] = useState(false);
 
   const allStandardSections = [
     { key: 'summary', label: 'Summary' },
@@ -261,6 +346,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
       customSections: initialData?.resume_data?.customSections || {},
       parentResumeId: initialData?.resume_data?.parentResumeId || '',
       history: initialData?.resume_data?.history || [],
+      chatHistory: initialData?.resume_data?.chatHistory || [],
     },
   });
 
@@ -286,6 +372,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
       customSections: methods.getValues('customSections') || {},
       parentResumeId: methods.getValues('parentResumeId'),
       history: methods.getValues('history') || [],
+      chatHistory: methods.getValues('chatHistory') || [],
     };
     
     setFutureStates(prev => [...prev, currentState]);
@@ -315,6 +402,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
       customSections: methods.getValues('customSections') || {},
       parentResumeId: methods.getValues('parentResumeId'),
       history: methods.getValues('history') || [],
+      chatHistory: methods.getValues('chatHistory') || [],
     };
     
     setPastStates(prev => [...prev, currentState]);
@@ -352,7 +440,11 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
         return;
       }
       
-      const timer = setTimeout(() => {
+      if (historyTimerRef.current) {
+        clearTimeout(historyTimerRef.current);
+      }
+      
+      historyTimerRef.current = setTimeout(() => {
         const stateToSave = {
           personalInfo: value.personalInfo,
           workExperience: value.workExperience,
@@ -367,6 +459,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
           customSections: value.customSections || {},
           parentResumeId: value.parentResumeId,
           history: value.history || [],
+          chatHistory: value.chatHistory || [],
         };
         
         if (lastSavedStateRef.current) {
@@ -385,10 +478,13 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
           lastSavedStateRef.current = stateToSave;
         }
       }, 800);
-      
-      return () => clearTimeout(timer);
     });
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      if (historyTimerRef.current) {
+        clearTimeout(historyTimerRef.current);
+      }
+    };
   }, [watch, isMounted]);
 
   // Snapshot Checkpoints
@@ -515,11 +611,223 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
     }
   };
 
+  // Synchronize comparedData content when compareBaseId changes
+  useEffect(() => {
+    if (!compareBaseId) {
+      setComparedData(null);
+      return;
+    }
+
+    if (compareBaseId.startsWith('snap_')) {
+      const snap = (formData.history || []).find((h: any) => h.id === compareBaseId);
+      if (snap) {
+        setComparedData(snap.data);
+      }
+    } else {
+      const res = allResumes.find(r => r.id === compareBaseId);
+      if (res) {
+        const normData = {
+          ...res.resume_data,
+          templateId: res.template_id || res.resume_data?.templateId || 'modern-minimalist',
+        };
+        if (normData.workExperience) {
+          normData.workExperience = normData.workExperience.map((exp: any) => ({
+            ...exp,
+            description: Array.isArray(exp.description)
+              ? `<ul>${exp.description.map((b: string) => `<li>${b}</li>`).join('')}</ul>`
+              : exp.description || '<ul><li></li></ul>'
+          }));
+        }
+        setComparedData(normData);
+      }
+    }
+  }, [compareBaseId, allResumes, formData.history]);
+
+  // Merge/Compare Actions
+  const handleAcceptIndividualChange = (diff: ResumeDifference) => {
+    const { fieldPath, changeType, baseValue, currentValue } = diff;
+    
+    if (changeType === 'added') {
+      // Accepting addition of item in current. (Already added, do nothing)
+    } else if (changeType === 'deleted') {
+      // Accepting deletion of item from current. (Already deleted, do nothing)
+    } else {
+      // Modified. Apply the compared version's value to the current resume.
+      setValue(fieldPath as any, baseValue, { shouldDirty: true, shouldTouch: true });
+    }
+    toast.success('Applied compared value!');
+  };
+
+  const handleRejectIndividualChange = (diff: ResumeDifference) => {
+    const { fieldPath, changeType, baseValue, currentValue } = diff;
+
+    if (changeType === 'added') {
+      // Reverting an addition means removing it from the current resume.
+      if (fieldPath === 'workExperience') {
+        const list = methods.getValues('workExperience') || [];
+        setValue('workExperience', list.filter(x => x.id !== currentValue.id), { shouldDirty: true });
+      } else if (fieldPath === 'education') {
+        const list = methods.getValues('education') || [];
+        setValue('education', list.filter(x => x.id !== currentValue.id), { shouldDirty: true });
+      } else if (fieldPath === 'projects') {
+        const list = methods.getValues('projects') || [];
+        setValue('projects', list.filter(x => x.id !== currentValue.id), { shouldDirty: true });
+      } else if (fieldPath === 'certificates') {
+        const list = methods.getValues('certificates') || [];
+        setValue('certificates', list.filter(x => x.id !== currentValue.id), { shouldDirty: true });
+      } else if (fieldPath === 'achievements') {
+        const list = methods.getValues('achievements') || [];
+        setValue('achievements', list.filter(x => x.id !== currentValue.id), { shouldDirty: true });
+      }
+    } else if (changeType === 'deleted') {
+      // Reverting a deletion means restoring it from base to the current resume.
+      if (fieldPath === 'workExperience') {
+        const list = methods.getValues('workExperience') || [];
+        setValue('workExperience', [...list, baseValue], { shouldDirty: true });
+      } else if (fieldPath === 'education') {
+        const list = methods.getValues('education') || [];
+        setValue('education', [...list, baseValue], { shouldDirty: true });
+      } else if (fieldPath === 'projects') {
+        const list = methods.getValues('projects') || [];
+        setValue('projects', [...list, baseValue], { shouldDirty: true });
+      } else if (fieldPath === 'certificates') {
+        const list = methods.getValues('certificates') || [];
+        setValue('certificates', [...list, baseValue], { shouldDirty: true });
+      } else if (fieldPath === 'achievements') {
+        const list = methods.getValues('achievements') || [];
+        setValue('achievements', [...list, baseValue], { shouldDirty: true });
+      }
+    } else {
+      // Reverting a modification means keeping our current value. (Already kept, do nothing)
+    }
+    toast.success('Kept current value!');
+  };
+
+  const handleAcceptAllChanges = () => {
+    if (!comparedData) return;
+    isUndoingRedoing.current = true;
+    methods.reset(comparedData);
+    lastSavedStateRef.current = comparedData;
+    toast.success('Applied all values from base version!');
+  };
+
+  const handleRejectAllChanges = () => {
+    setIsCompareActive(false);
+    toast.success('Kept all current edits.');
+  };
+
+  const handleCreateAiImprovedVersion = async () => {
+    setIsAiImproving(true);
+    const toastId = toast.loading('AI is optimizing your entire resume. This takes a few seconds...');
+    try {
+      const response = await fetch('/api/ai?action=improve-resume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resumeData: formData })
+      });
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+
+      // Create new version in DB with version_type 'improved'
+      const dupResponse = await duplicateResume(resumeId, `AI Improved`, baseResumeId, 'improved');
+      if (dupResponse.success && dupResponse.id) {
+        // Now save the AI improved data to the new resume version
+        const { error: saveError } = await supabase.rpc('save_complete_resume', {
+          p_resume_id: dupResponse.id,
+          p_title: `${resumeTitle} (AI Improved)`,
+          p_template_id: formData.templateId || 'modern-minimalist',
+          p_resume_data: data.improvedResume,
+          p_experiences: (data.improvedResume.workExperience || []).map((exp: any) => ({
+            ...exp,
+            description: convertHtmlToBulletArray(exp.description || '')
+          })),
+          p_educations: data.improvedResume.education || [],
+          p_projects: data.improvedResume.projects || [],
+          p_skills: [
+            ...(data.improvedResume.skills?.technicalSkills || []).map((skillName: string) => ({ skillName, category: 'technical' })),
+            ...(data.improvedResume.skills?.softSkills || []).map((skillName: string) => ({ skillName, category: 'soft' })),
+          ],
+        });
+
+        if (saveError) throw saveError;
+
+        toast.dismiss(toastId);
+        toast.success('AI Improved version created! Redirecting...');
+        window.location.href = `/builder/${dupResponse.id}`;
+      } else {
+        throw new Error(dupResponse.error);
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.dismiss(toastId);
+      toast.error(`AI Optimization failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsAiImproving(false);
+    }
+  };
+
+  const handleSaveTailoredVersion = async (tailoredData: Partial<ResumeValues>, label: string) => {
+    const toastId = toast.loading('Saving tailored version...');
+    try {
+      const versionLabel = label || 'Tailored Version';
+      const dupResponse = await duplicateResume(resumeId, versionLabel, baseResumeId, 'tailored');
+      if (dupResponse.success && dupResponse.id) {
+        const merged = { ...formData, ...tailoredData };
+        const { error: saveError } = await supabase.rpc('save_complete_resume', {
+          p_resume_id: dupResponse.id,
+          p_title: `${resumeTitle} (${versionLabel})`,
+          p_template_id: merged.templateId || 'modern-minimalist',
+          p_resume_data: {
+            personalInfo: merged.personalInfo,
+            certificates: merged.certificates || [],
+            achievements: merged.achievements || [],
+            workExperience: merged.workExperience || [],
+            education: merged.education || [],
+            projects: merged.projects || [],
+            skills: merged.skills || { technicalSkills: [], softSkills: [] },
+            sectionOrder: merged.sectionOrder || [],
+            visibleSections: merged.visibleSections || {},
+            customSections: merged.customSections || {},
+            parentResumeId: baseResumeId,
+            history: merged.history || [],
+            chatHistory: merged.chatHistory || [],
+          },
+          p_experiences: (merged.workExperience || []).map((exp: any) => ({
+            ...exp,
+            description: convertHtmlToBulletArray(exp.description || '')
+          })),
+          p_educations: merged.education || [],
+          p_projects: merged.projects || [],
+          p_skills: [
+            ...((merged.skills?.technicalSkills || []).map((skillName: string) => ({ skillName, category: 'technical' }))),
+            ...((merged.skills?.softSkills || []).map((skillName: string) => ({ skillName, category: 'soft' }))),
+          ],
+        });
+        if (saveError) throw saveError;
+        toast.dismiss(toastId);
+        toast.success(`"${versionLabel}" saved! Opening now...`);
+        setTimeout(() => { window.location.href = `/builder/${dupResponse.id}`; }, 1200);
+      } else {
+        throw new Error(dupResponse.error || 'Failed to duplicate resume');
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.dismiss(toastId);
+      toast.error(`Failed to save tailored version: ${err.message || 'Unknown error'}`);
+    }
+  };
+
   // Auto-saving debouncing trigger
+
   useEffect(() => {
     const subscription = watch((value) => {
       setSaveStatus('saving');
-      const debounceTimer = setTimeout(async () => {
+      
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+      }
+      
+      autosaveTimerRef.current = setTimeout(async () => {
         try {
           const { error } = await supabase.rpc('save_complete_resume', {
             p_resume_id: resumeId,
@@ -540,6 +848,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
               customSections: value.customSections || {},
               parentResumeId: value.parentResumeId || '',
               history: value.history || [],
+              chatHistory: value.chatHistory || [],
             },
             p_experiences: (value.workExperience || []).map((exp: any) => ({
               ...exp,
@@ -561,11 +870,14 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
           toast.error('Autosave failed. Please check network connection.');
         }
       }, 1200);
-
-      return () => clearTimeout(debounceTimer);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      subscription.unsubscribe();
+      if (autosaveTimerRef.current) {
+        clearTimeout(autosaveTimerRef.current);
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watch, resumeId, supabase, resumeTitle, resumeStatus]);
 
@@ -592,6 +904,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
           customSections: data.customSections || {},
           parentResumeId: data.parentResumeId || '',
           history: data.history || [],
+          chatHistory: data.chatHistory || [],
         },
         p_experiences: (data.workExperience || []).map((exp: any) => ({
           ...exp,
@@ -637,6 +950,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
           customSections: formData.customSections || {},
           parentResumeId: formData.parentResumeId || '',
           history: formData.history || [],
+          chatHistory: formData.chatHistory || [],
         },
         p_experiences: (formData.workExperience || []).map((exp: any) => ({
           ...exp,
@@ -683,6 +997,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
           customSections: formData.customSections || {},
           parentResumeId: formData.parentResumeId || '',
           history: formData.history || [],
+          chatHistory: formData.chatHistory || [],
         },
         p_experiences: (formData.workExperience || []).map((exp: any) => ({
           ...exp,
@@ -886,7 +1201,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
                         </Link>
                       ))}
                     </div>
-                    <div className="border-t border-slate-800/40 mt-1 pt-1">
+                    <div className="border-t border-slate-800/40 mt-1 pt-1 space-y-1">
                       <button
                         type="button"
                         onClick={handleCreateNewVersion}
@@ -902,6 +1217,25 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
                           <>
                             <Plus className="w-3.5 h-3.5" />
                             Create Version V{versions.length + 1}
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCreateAiImprovedVersion}
+                        disabled={isAiImproving}
+                        className="w-full text-left px-3.5 py-2 text-xs rounded-xl text-amber-400 hover:bg-amber-500/10 font-bold flex items-center gap-1.5 transition-all border-t border-slate-800/45 pt-1.5"
+                        title="AI will optimize your entire resume layout and phrasing, saving it as a new AI Improved version."
+                      >
+                        {isAiImproving ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            Improving...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-3.5 h-3.5" />
+                            AI Improve Entire Resume
                           </>
                         )}
                       </button>
@@ -1006,7 +1340,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
               {/* Workspace Light/Dark Toggler */}
               <button
                 type="button"
-                onClick={() => setWorkspaceTheme(workspaceTheme === 'dark' ? 'light' : 'dark')}
+                onClick={handleToggleTheme}
                 className={`p-2 rounded-xl border transition-all ${
                   workspaceTheme === 'dark'
                     ? 'border-slate-800 bg-slate-900/40 text-slate-400 hover:text-white'
@@ -1014,7 +1348,37 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
                 }`}
                 title="Toggle Workspace Theme"
               >
-                {workspaceTheme === 'dark' ? '☀️' : '🌙'}
+                {workspaceTheme === 'dark' ? <Sun className="w-3.5 h-3.5 text-amber-400" /> : <Moon className="w-3.5 h-3.5 text-slate-850" />}
+              </button>
+
+              {/* Compare Mode Toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCompareActive(!isCompareActive);
+                  setIsAiOpen(false);
+                  setIsHistoryOpen(false);
+                  // Auto-select comparison base if none chosen yet
+                  if (!compareBaseId) {
+                    const otherVer = versions.find(v => v.id !== resumeId);
+                    if (otherVer) {
+                      setCompareBaseId(otherVer.id);
+                    } else if (formData.history && formData.history.length > 0) {
+                      setCompareBaseId(formData.history[0].id);
+                    }
+                  }
+                }}
+                className={`flex items-center gap-1 px-3 py-2 text-xs font-semibold rounded-xl border transition-all ${
+                  isCompareActive
+                    ? 'bg-indigo-600/10 border-indigo-500 text-indigo-400 shadow-md'
+                    : workspaceTheme === 'dark'
+                    ? 'border-slate-800 bg-slate-900/40 text-indigo-400 hover:bg-slate-900 hover:text-white'
+                    : 'border-slate-200 bg-slate-100 text-indigo-600 hover:bg-slate-200'
+                }`}
+                title="Compare structural versions side-by-side"
+              >
+                <GitPullRequest className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Compare Mode</span>
               </button>
 
               {/* AI Co-Pilot Toggle */}
@@ -1023,6 +1387,7 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
                 onClick={() => {
                   setIsAiOpen(!isAiOpen);
                   setIsHistoryOpen(false);
+                  setIsCompareActive(false);
                 }}
                 className={`flex items-center gap-1 px-3 py-2 text-xs font-semibold rounded-xl border transition-all ${
                   isAiOpen 
@@ -1057,9 +1422,14 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
                     workspaceTheme === 'dark' ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
                   }`}>
                     {([
-                      { id: 'modern-minimalist', label: 'Minimalist' },
-                      { id: 'professional', label: 'Professional' },
-                      { id: 'executive', label: 'Executive' }
+                      { id: 'ats', label: 'ATS Friendly' },
+                      { id: 'tech', label: 'Developer & Tech' },
+                      { id: 'executive', label: 'Executive Portfolio' },
+                      { id: 'modern', label: 'Modern Design' },
+                      { id: 'minimal', label: 'Minimalist Clean' },
+                      { id: 'creative', label: 'Creative Accent' },
+                      { id: 'modern-minimalist', label: 'Minimalist (Legacy)' },
+                      { id: 'professional', label: 'Professional (Legacy)' }
                     ] as const).map((tmpl) => (
                       <button
                         key={tmpl.id}
@@ -1126,35 +1496,14 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
               )}
 
               {/* PDF Exporter Button */}
-              {isMounted ? (
-                <PDFDownloadLink
-                  document={<ResumePDFDocument data={formData} />}
-                  fileName={`${(formData.personalInfo?.fullName || 'My_Resume').replace(/\s+/g, '_')}_Resume.pdf`}
-                >
-                  {({ loading }) => (
-                    <button
-                      type="button"
-                      disabled={loading}
-                      onClick={() => {
-                        if (!loading) toast.success('Exporting A4 PDF...');
-                      }}
-                      className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl disabled:opacity-50 transition-all duration-200 animate-fade-in shadow-lg shadow-indigo-600/10"
-                    >
-                      <Download className="w-3.5 h-3.5" />
-                      {loading ? 'Preparing...' : 'Export PDF'}
-                    </button>
-                  )}
-                </PDFDownloadLink>
-              ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-slate-500 bg-slate-800 rounded-xl"
-                >
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Loading PDF...
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleExportPdf}
+                className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all duration-200 shadow-lg shadow-indigo-600/10 cursor-pointer"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Export PDF
+              </button>
 
               {/* Logout Button */}
               <button
@@ -1386,153 +1735,410 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
           </div>
 
           {/* ==========================================
-             RIGHT PANEL: LIVE CANVAS RESUME PREVIEW
+             RIGHT PANEL: PREVIEW / COMPARE WORKSPACE
              ========================================== */}
-          <div className="flex-grow lg:w-[48%] xl:w-[52%] bg-slate-900/15 p-6 overflow-y-auto max-h-[calc(100vh-64px)] hidden md:flex flex-col items-center justify-start gap-4 select-none">
-            {/* Zoom controls */}
-            <div className={`flex items-center gap-2 px-3 py-1 rounded-xl border backdrop-blur-md sticky top-0 z-20 shadow-sm ${
-              workspaceTheme === 'dark' ? 'bg-slate-950/80 border-slate-900 text-white' : 'bg-white/80 border-slate-200 text-slate-900'
-            }`}>
-              <button
-                type="button"
-                onClick={() => setZoomScale(prev => Math.max(0.5, prev - 0.1))}
-                className="p-1 rounded hover:bg-indigo-500/10 text-slate-400 hover:text-indigo-400 transition-colors"
-                title="Zoom Out"
-              >
-                <ZoomOut className="w-3.5 h-3.5" />
-              </button>
-              <span className="text-[10px] font-bold font-mono text-slate-400 w-12 text-center">
-                {Math.round(zoomScale * 100)}%
-              </span>
-              <button
-                type="button"
-                onClick={() => setZoomScale(prev => Math.min(1.5, prev + 0.1))}
-                className="p-1 rounded hover:bg-indigo-500/10 text-slate-400 hover:text-indigo-400 transition-colors"
-                title="Zoom In"
-              >
-                <ZoomIn className="w-3.5 h-3.5" />
-              </button>
-              <div className="h-3.5 w-[1px] bg-slate-800/40 mx-1" />
-              <button
-                type="button"
-                onClick={() => setZoomScale(1.0)}
-                className="px-2 py-0.5 text-[9px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
-                title="Reset Zoom"
-              >
-                Reset
-              </button>
-            </div>
-
-            {/* Scale Wrapper */}
-            <div
-              className="w-full max-w-[800px] shrink-0 origin-top transition-transform duration-200"
-              style={{ transform: `scale(${zoomScale})` }}
-            >
-              <LivePreview data={formData} />
-            </div>
-          </div>
-
-          {/* ==========================================
-             AI ASSISTANT DRAWER PANEL
-             ========================================== */}
-          <div className={`fixed top-16 right-0 bottom-0 z-30 w-[420px] max-w-full shadow-2xl border-l backdrop-blur-xl flex flex-col transform transition-transform duration-300 ${
-            isAiOpen ? 'translate-x-0' : 'translate-x-full'
-          } ${
-            workspaceTheme === 'dark' ? 'bg-slate-950/90 border-slate-900' : 'bg-white/95 border-slate-200'
-          }`}>
-            <div className="flex-grow overflow-y-auto p-5">
-              <AIPanel />
-            </div>
-          </div>
-
-          {/* ==========================================
-             HISTORY TIMELINE DRAWER PANEL
-             ========================================== */}
-          <div className={`fixed top-16 right-0 bottom-0 z-30 w-[420px] max-w-full shadow-2xl border-l backdrop-blur-xl flex flex-col transform transition-transform duration-300 ${
-            isHistoryOpen ? 'translate-x-0' : 'translate-x-full'
-          } ${
-            workspaceTheme === 'dark' ? 'bg-slate-950/90 border-slate-900 text-white' : 'bg-white/95 border-slate-200 text-slate-900'
-          }`}>
-            <div className="flex-grow overflow-y-auto p-5 flex flex-col h-full justify-between">
-              <div className="space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-800/50 pb-3">
-                  <div className="flex items-center gap-2">
-                    <History className="w-4 h-4 text-indigo-400" />
-                    <h3 className="text-sm font-bold tracking-tight">Version Checkpoints</h3>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setIsHistoryOpen(false)}
-                    className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  {/* Create Snapshot Form */}
-                  <div className="bg-slate-900/30 border border-slate-800/80 p-3.5 rounded-xl space-y-2.5">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Save Checkpoint</span>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="Snapshot name (e.g. Added certificates)"
-                        value={snapshotLabel}
-                        onChange={(e) => setSnapshotLabel(e.target.value)}
-                        className={`bg-slate-950 text-xs border border-slate-800 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full text-white`}
-                      />
-                      <button
-                        type="button"
-                        onClick={handleSaveSnapshot}
-                        className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-all shrink-0"
+          {isCompareActive ? (
+            /* ==========================================
+               COMPARE MODE WORKSPACE
+               ========================================== */
+            <div className="flex-grow lg:w-[48%] xl:w-[52%] bg-slate-950 p-6 overflow-y-auto max-h-[calc(100vh-64px)] hidden md:flex flex-col gap-6 select-none border-l border-slate-900">
+              {/* Compare Control Bar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 bg-slate-900/40 border border-slate-900 p-4 rounded-2xl w-full sticky top-0 z-20 backdrop-blur-md">
+                <div className="flex items-center gap-3">
+                  <GitPullRequest className="w-4 h-4 text-indigo-400 animate-pulse" />
+                  <div className="space-y-0.5">
+                    <h4 className="text-xs font-bold text-slate-200">Comparison Workspace</h4>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Compare Base:</span>
+                      <select
+                        value={compareBaseId}
+                        onChange={(e) => setCompareBaseId(e.target.value)}
+                        className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       >
-                        Save
-                      </button>
+                        <option value="">-- Select Version/Snapshot --</option>
+                        <optgroup label="Document Versions">
+                          {versions.map((ver, idx) => (
+                            <option key={ver.id} value={ver.id} disabled={ver.id === resumeId}>
+                              V{idx + 1}: {ver.title} {ver.id === resumeId ? '(Current)' : ''}
+                            </option>
+                          ))}
+                        </optgroup>
+                        <optgroup label="Checkpoint Snapshots">
+                          {(formData.history || []).map((snap: any) => (
+                            <option key={snap.id} value={snap.id}>
+                              Snapshot: {snap.label} ({new Date(snap.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})})
+                            </option>
+                          ))}
+                        </optgroup>
+                      </select>
                     </div>
                   </div>
+                </div>
 
-                  {/* Snapshots Timeline */}
-                  <div className="space-y-3 mt-4">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Timeline</span>
-                    {(formData.history || []).length === 0 ? (
-                      <p className="text-xs text-slate-500 italic py-4">No checkpoints saved yet.</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleAcceptAllChanges}
+                    disabled={!comparedData}
+                    className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl disabled:opacity-40 transition-all cursor-pointer shadow-md"
+                    title="Overwrite all fields in current resume with base version values"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    Accept All Changes
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleRejectAllChanges}
+                    className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-300 bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded-xl transition-all cursor-pointer"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    Reject All Changes
+                  </button>
+                </div>
+              </div>
+
+              {/* Side by Side Previews */}
+              {comparedData ? (
+                <div className="space-y-6 w-full">
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 w-full items-start">
+                    
+                    {/* Left Column: Base Version (Read Only) */}
+                    <div className="space-y-2 w-full">
+                      <div className="flex justify-between items-center px-1">
+                        <span className="text-[10px] uppercase font-black tracking-widest text-rose-400">Base Version (Read-Only)</span>
+                        <span className="text-[9px] bg-rose-500/10 border border-rose-500/20 text-rose-400 px-2 py-0.5 rounded-full font-mono">
+                          {compareBaseId.startsWith('snap_') ? 'Checkpoint' : 'Database Version'}
+                        </span>
+                      </div>
+                      <div className="pointer-events-none select-none opacity-80 border-2 border-dashed border-rose-500/20 rounded-2xl overflow-hidden scale-[0.8] origin-top w-full">
+                        <LivePreview data={comparedData} />
+                      </div>
+                    </div>
+
+                    {/* Right Column: Current Version (Editable) */}
+                    <div className="space-y-2 w-full">
+                      <div className="flex justify-between items-center px-1">
+                        <span className="text-[10px] uppercase font-black tracking-widest text-emerald-400">Current Version (Interactive)</span>
+                        <span className="text-[9px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-mono">
+                          Active Form
+                        </span>
+                      </div>
+                      <div className="border-2 border-dashed border-emerald-500/20 rounded-2xl overflow-hidden scale-[0.8] origin-top w-full">
+                        <LivePreview data={formData} />
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Changes List / Diff Dashboard */}
+                  <div className="bg-slate-900/40 border border-slate-900 p-5 rounded-2xl space-y-4">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300 border-b border-slate-800 pb-2">
+                      Detected Lineage Changes ({getResumeDifferences(comparedData, formData).length})
+                    </h3>
+
+                    {getResumeDifferences(comparedData, formData).length === 0 ? (
+                      <p className="text-xs text-slate-500 italic py-4 text-center">No differences found. Both versions match perfectly!</p>
                     ) : (
-                      <div className="relative border-l border-slate-800 pl-4 space-y-3 ml-2">
-                        {(formData.history || []).map((snap: any, index: number) => (
-                          <div key={snap.id || index} className="relative group">
-                            <div className="absolute -left-[21px] top-1.5 w-2 h-2 rounded-full bg-indigo-500 border border-slate-950" />
-                            
-                            <div className="flex items-start justify-between gap-3 bg-slate-900/10 hover:bg-slate-900/20 p-2.5 rounded-lg border border-slate-800/60 hover:border-indigo-500/30 transition-all">
-                              <div className="min-w-0">
-                                <span className="text-xs font-bold text-slate-300 block truncate">{snap.label}</span>
-                                <span className="text-[9px] text-slate-500 font-mono mt-0.5 block">{new Date(snap.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                      <div className="space-y-3.5 max-h-96 overflow-y-auto pr-1">
+                        {getResumeDifferences(comparedData, formData).map((diff) => {
+                          const isNew = diff.changeType === 'added';
+                          const isDel = diff.changeType === 'deleted';
+                          
+                          return (
+                            <div key={diff.id} className="p-3.5 bg-slate-950 border border-slate-900 rounded-xl space-y-3">
+                              <div className="flex justify-between items-start">
+                                <div className="space-y-0.5">
+                                  <span className="text-[9px] uppercase font-black tracking-widest text-indigo-400">{diff.section}</span>
+                                  <h5 className="text-xs font-bold text-slate-200">{diff.itemLabel}</h5>
+                                </div>
+                                <span className={`text-[8px] uppercase tracking-wider font-extrabold px-2 py-0.5 rounded-full border ${
+                                  isNew ? 'bg-emerald-950/80 border-emerald-500/30 text-emerald-400' :
+                                  isDel ? 'bg-rose-950/80 border-rose-500/30 text-rose-400' :
+                                  'bg-amber-950/80 border-amber-500/30 text-amber-400'
+                                }`}>
+                                  {diff.changeType}
+                                </span>
                               </div>
-                              <div className="flex gap-1.5 shrink-0">
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[10px] leading-relaxed">
+                                {/* Base value display */}
+                                {!isNew && (
+                                  <div className="p-2.5 bg-slate-900/30 border border-slate-900 rounded-lg">
+                                    <span className="text-[8px] font-black text-rose-400 uppercase tracking-widest">Base value:</span>
+                                    <div className="text-slate-400 mt-1 whitespace-pre-wrap line-through font-light">
+                                      {Array.isArray(diff.baseValue) 
+                                        ? diff.baseValue.join(', ') 
+                                        : typeof diff.baseValue === 'string' && diff.baseValue.startsWith('<ul>')
+                                        ? diff.baseValue.replace(/<[^>]*>/g, '')
+                                        : String(diff.baseValue)}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Current value display */}
+                                {!isDel && (
+                                  <div className="p-2.5 bg-slate-900/30 border border-slate-900 rounded-lg">
+                                    <span className="text-[8px] font-black text-emerald-400 uppercase tracking-widest">Current value:</span>
+                                    <div className="text-slate-200 mt-1 whitespace-pre-wrap font-semibold">
+                                      {Array.isArray(diff.currentValue) 
+                                        ? diff.currentValue.join(', ') 
+                                        : typeof diff.currentValue === 'string' && diff.currentValue.startsWith('<ul>')
+                                        ? diff.currentValue.replace(/<[^>]*>/g, '')
+                                        : String(diff.currentValue)}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="flex gap-2 justify-end border-t border-slate-900/60 pt-2.5">
+                                {/* Revert / Apply Base */}
                                 <button
                                   type="button"
-                                  onClick={() => handleRestoreSnapshot(snap)}
-                                  className="px-2 py-0.5 text-[9px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded hover:bg-indigo-500/25 transition-all"
+                                  onClick={() => handleAcceptIndividualChange(diff)}
+                                  className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded hover:bg-rose-500/25 transition-all cursor-pointer"
+                                  title="Overwrite current form with compared value for this field"
                                 >
-                                  Restore
+                                  Apply Base Value
                                 </button>
+
+                                {/* Discard Change / Keep Current */}
                                 <button
                                   type="button"
-                                  onClick={() => handleDeleteSnapshot(snap.id)}
-                                  className="p-0.5 text-slate-500 hover:text-rose-400 transition-colors"
+                                  onClick={() => handleRejectIndividualChange(diff)}
+                                  className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded hover:bg-emerald-500/25 transition-all cursor-pointer"
                                 >
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  Keep Current
+                                </button>
+
+                                {/* Edit manually */}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveSection(diff.section);
+                                    toast.info(`Switched to ${sectionLabels[diff.section] || diff.section} form editor!`);
+                                  }}
+                                  className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-slate-400 hover:text-white bg-slate-900 hover:bg-slate-800 border border-slate-800 rounded transition-all cursor-pointer"
+                                >
+                                  Edit Manually
                                 </button>
                               </div>
                             </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
                 </div>
+              ) : (
+                <div className="flex-grow flex flex-col justify-center items-center text-center p-12 border border-dashed border-slate-900 rounded-3xl min-h-[400px]">
+                  <GitPullRequest className="w-12 h-12 text-slate-700 mb-3 animate-pulse" />
+                  <h4 className="text-sm font-bold text-slate-300">Select Version to Compare</h4>
+                  <p className="text-slate-500 text-xs mt-1 max-w-sm">
+                    Choose a database copy or snapshot from the comparison selector above to view structural changes side-by-side.
+                  </p>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* ==========================================
+               STANDARD LIVE PREVIEW WORKSPACE
+               ========================================== */
+            <div className="flex-grow lg:w-[48%] xl:w-[52%] bg-slate-900/15 p-6 overflow-y-auto max-h-[calc(100vh-64px)] hidden md:flex flex-col items-center justify-start gap-4 select-none">
+              {/* Zoom controls */}
+              <div className={`flex items-center gap-2 px-3 py-1 rounded-xl border backdrop-blur-md sticky top-0 z-20 shadow-sm ${
+                workspaceTheme === 'dark' ? 'bg-slate-950/80 border-slate-900 text-white' : 'bg-white/80 border-slate-200 text-slate-900'
+              }`}>
+                <button
+                  type="button"
+                  onClick={() => setZoomScale(prev => Math.max(0.5, prev - 0.1))}
+                  className="p-1 rounded hover:bg-indigo-500/10 text-slate-400 hover:text-indigo-400 transition-colors"
+                  title="Zoom Out"
+                >
+                  <ZoomOut className="w-3.5 h-3.5" />
+                </button>
+                <span className="text-[10px] font-bold font-mono text-slate-400 w-12 text-center">
+                  {Math.round(zoomScale * 100)}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setZoomScale(prev => Math.min(1.5, prev + 0.1))}
+                  className="p-1 rounded hover:bg-indigo-500/10 text-slate-400 hover:text-indigo-400 transition-colors"
+                  title="Zoom In"
+                >
+                  <ZoomIn className="w-3.5 h-3.5" />
+                </button>
+                <div className="h-3.5 w-[1px] bg-slate-800/40 mx-1" />
+                <button
+                  type="button"
+                  onClick={() => setZoomScale(1.0)}
+                  className="px-2 py-0.5 text-[9px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors"
+                  title="Reset Zoom"
+                >
+                  Reset
+                </button>
+              </div>
+
+              {/* Scale Wrapper */}
+              <div
+                className="w-full max-w-[800px] shrink-0 origin-top transition-transform duration-200"
+                style={{ transform: `scale(${zoomScale})` }}
+              >
+                <LivePreview data={formData} />
               </div>
             </div>
-          </div>
+          )}
+
+          {/* ==========================================
+             AI ASSISTANT DRAWER PANEL
+             ========================================== */}
+          <AnimatePresence>
+            {isAiOpen && (
+              <motion.div
+                initial={{ x: '100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+                className={`fixed top-16 right-0 bottom-0 z-30 w-[420px] max-w-full shadow-2xl border-l backdrop-blur-xl flex flex-col ${
+                  workspaceTheme === 'dark' ? 'bg-slate-950/95 border-slate-900' : 'bg-white/95 border-slate-200'
+                }`}
+              >
+                <div className="flex-grow overflow-y-auto p-5">
+                  <AIPanel onSaveTailoredVersion={handleSaveTailoredVersion} />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ==========================================
+             HISTORY TIMELINE DRAWER PANEL
+             ========================================== */}
+          <AnimatePresence>
+            {isHistoryOpen && (
+              <motion.div
+                initial={{ x: '100%' }}
+                animate={{ x: 0 }}
+                exit={{ x: '100%' }}
+                transition={{ type: 'spring', damping: 25, stiffness: 220 }}
+                className={`fixed top-16 right-0 bottom-0 z-30 w-[420px] max-w-full shadow-2xl border-l backdrop-blur-xl flex flex-col ${
+                  workspaceTheme === 'dark' ? 'bg-slate-950/95 border-slate-900 text-white' : 'bg-white/95 border-slate-200 text-slate-900'
+                }`}
+              >
+                <div className="flex-grow overflow-y-auto p-5 flex flex-col h-full justify-between">
+                  <div className="space-y-6">
+                    <div className="flex items-center justify-between border-b border-slate-800/50 pb-3">
+                      <div className="flex items-center gap-2">
+                        <History className="w-4 h-4 text-indigo-400" />
+                        <h3 className="text-sm font-bold tracking-tight">Version Checkpoints</h3>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsHistoryOpen(false)}
+                        className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div className="space-y-4">
+                      {/* Create Snapshot Form */}
+                      <div className="bg-slate-900/30 border border-slate-800/80 p-3.5 rounded-xl space-y-2.5">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Save Checkpoint</span>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            placeholder="Snapshot name (e.g. Added certificates)"
+                            value={snapshotLabel}
+                            onChange={(e) => setSnapshotLabel(e.target.value)}
+                            className="bg-slate-950 text-xs border border-slate-800 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 w-full text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleSaveSnapshot}
+                            className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg transition-all shrink-0"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Snapshots Timeline */}
+                      <div className="space-y-3 mt-4">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Timeline</span>
+                        {(formData.history || []).length === 0 ? (
+                          <p className="text-xs text-slate-500 italic py-4">No checkpoints saved yet.</p>
+                        ) : (
+                          <div className="relative border-l border-slate-800 pl-4 space-y-3 ml-2">
+                            {(formData.history || []).map((snap: any, index: number) => (
+                              <div key={snap.id || index} className="relative group">
+                                <div className="absolute -left-[21px] top-1.5 w-2 h-2 rounded-full bg-indigo-500 border border-slate-950" />
+                                
+                                <div className="flex items-start justify-between gap-3 bg-slate-900/10 hover:bg-slate-900/20 p-2.5 rounded-lg border border-slate-800/60 hover:border-indigo-500/30 transition-all">
+                                  <div className="min-w-0">
+                                    <span className="text-xs font-bold text-slate-300 block truncate">{snap.label}</span>
+                                    <span className="text-[9px] text-slate-500 font-mono mt-0.5 block">{new Date(snap.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                  </div>
+                                  <div className="flex gap-1.5 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRestoreSnapshot(snap)}
+                                      className="px-2 py-0.5 text-[9px] font-bold text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 rounded hover:bg-indigo-500/25 transition-all"
+                                    >
+                                      Restore
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteSnapshot(snap.id)}
+                                      className="p-0.5 text-slate-500 hover:text-rose-400 transition-colors"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* ==========================================
+             FLOATING COMMAND PALETTE
+             ========================================== */}
+          <CommandPalette
+            isOpen={isCommandPaletteOpen}
+            onClose={() => setIsCommandPaletteOpen(false)}
+            onSwitchTemplate={(templateId) => {
+              setValue('templateId', templateId as any);
+              toast.success(`Switched template to ${templateId}!`);
+            }}
+            onNavigateSection={(sectionKey) => {
+              setActiveSection(sectionKey);
+            }}
+            onExportPdf={handleExportPdf}
+            onExportDocx={() => handleExportDocx(formData)}
+            onToggleTheme={handleToggleTheme}
+            onTriggerAi={() => {
+              setIsAiOpen(true);
+              setIsHistoryOpen(false);
+            }}
+            onTriggerHistory={() => {
+              setIsHistoryOpen(true);
+              setIsAiOpen(false);
+            }}
+            sections={[
+              ...allStandardSections,
+              ...(formData.sectionOrder || []).filter(key => key.startsWith('custom_')).map(key => {
+                const customSectionsAny = formData.customSections as any;
+                return { key, label: customSectionsAny?.[key]?.title || 'Custom Section' };
+              })
+            ]}
+            currentTheme={workspaceTheme}
+          />
 
         </div>
 
