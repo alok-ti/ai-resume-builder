@@ -10,6 +10,7 @@ import {
   Loader2,
   Check,
   Brain,
+  Briefcase,
   AlertCircle,
   Copy,
   Plus,
@@ -25,12 +26,13 @@ import {
   ShieldAlert,
   Target,
   Download,
-  Save
+  Save,
+  Undo
 } from 'lucide-react';
 import { useToast } from '@/components/ui/toast';
 import { TailorPanel } from '@/components/builder/tailor-panel';
 
-type TabType = 'copilot' | 'ats' | 'tailor' | 'coverletter' | 'chat' | 'interview' | 'repair';
+type TabType = 'copilot' | 'ats' | 'skill-gap' | 'tailor' | 'coverletter' | 'chat' | 'interview' | 'repair' | 'rewriter';
 
 interface Message {
   role: 'user' | 'model';
@@ -62,6 +64,272 @@ export function AIPanel({ onSaveTailoredVersion }: AIPanelProps = {}) {
   
   // Tab State
   const [activeTab, setActiveTab] = useState<TabType>('chat');
+
+  // Premium Experience Bullet Rewriter States
+  const [selectedRewriteExpIdx, setSelectedRewriteExpIdx] = useState<number>(0);
+  const [selectedRewriteBulletIdx, setSelectedRewriteBulletIdx] = useState<number>(0);
+  
+  interface BulletRewriteResponse {
+    originalScore: number;
+    actionOriented: { text: string; explanation: string; confidence: 'high' | 'medium' | 'low'; score: number };
+    quantified: { text: string; explanation: string; confidence: 'high' | 'medium' | 'low'; score: number };
+    concise: { text: string; explanation: string; confidence: 'high' | 'medium' | 'low'; score: number };
+    atsOptimized: { text: string; explanation: string; confidence: 'high' | 'medium' | 'low'; score: number };
+  }
+
+  const [rewriteSuggestions, setRewriteSuggestions] = useState<BulletRewriteResponse | null>(null);
+  
+  const [editedSuggestions, setEditedSuggestions] = useState<{
+    actionOriented: string;
+    quantified: string;
+    concise: string;
+    atsOptimized: string;
+  }>({ actionOriented: '', quantified: '', concise: '', atsOptimized: '' });
+  
+  const [rewriteHistory, setRewriteHistory] = useState<BulletRewriteResponse[]>([]);
+  const [rewriteHistoryIdx, setRewriteHistoryIdx] = useState<number>(-1);
+  const [rewriteCache, setRewriteCache] = useState<Record<string, { suggestions: BulletRewriteResponse; createdAt: number }>>({});
+  
+  const [bulletUndoStack, setBulletUndoStack] = useState<string[]>([]);
+  const [isRewriteLoading, setIsRewriteLoading] = useState<boolean>(false);
+  const [rewriteError, setRewriteError] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // Clean up any pending fetch on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
+  const handleRewriteBullet = async (bypassCache = false) => {
+    const exp = workExperience[selectedRewriteExpIdx];
+    if (!exp) return;
+    const bullets = extractBullets(exp.description || '');
+    const currentBulletText = bullets[selectedRewriteBulletIdx] || '';
+    if (!currentBulletText.trim()) {
+      toast.error('Select a valid bullet point to optimize.');
+      return;
+    }
+
+    // Abort active fetch request if any
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    const { signal } = abortControllerRef.current;
+
+    setIsRewriteLoading(true);
+    setRewriteError(null);
+
+    // Analytics hook
+    console.log('bullet_rewrite_generated', { bullet: currentBulletText });
+
+    // Check cache: must be less than 30 minutes old
+    const now = Date.now();
+    if (!bypassCache && rewriteCache[currentBulletText]) {
+      const cacheEntry = rewriteCache[currentBulletText];
+      if (now - cacheEntry.createdAt < 30 * 60 * 1000) {
+        const cached = cacheEntry.suggestions;
+        setRewriteSuggestions(cached);
+        setEditedSuggestions({
+          actionOriented: cached.actionOriented.text,
+          quantified: cached.quantified.text,
+          concise: cached.concise.text,
+          atsOptimized: cached.atsOptimized.text,
+        });
+        
+        // Push into history stack
+        setRewriteHistory(prev => {
+          const nextHist = [...prev, cached];
+          setRewriteHistoryIdx(nextHist.length - 1);
+          return nextHist;
+        });
+        setIsRewriteLoading(false);
+        toast.success('Loaded optimization suggestions from cache!');
+        return;
+      }
+    }
+
+    const loaderToastId = toast.loading('Generating premium AI suggestions...');
+    try {
+      const response = await fetch('/api/ai?action=bullet-rewrite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bullet: currentBulletText,
+          position: exp.position || 'Software Engineer',
+          company: exp.company || 'Company'
+        }),
+        signal
+      });
+      
+      const data = await response.json();
+      if (data.error) throw new Error(data.error);
+
+      // Save to cache with createdAt timestamp
+      setRewriteCache(prev => ({
+        ...prev,
+        [currentBulletText]: { suggestions: data, createdAt: now }
+      }));
+      
+      setRewriteSuggestions(data);
+      setEditedSuggestions({
+        actionOriented: data.actionOriented.text,
+        quantified: data.quantified.text,
+        concise: data.concise.text,
+        atsOptimized: data.atsOptimized.text,
+      });
+
+      // Update history stack
+      setRewriteHistory(prev => {
+        const nextHist = [...prev, data];
+        setRewriteHistoryIdx(nextHist.length - 1);
+        return nextHist;
+      });
+
+      toast.dismiss(loaderToastId);
+      toast.success('Fresh suggestions generated successfully!');
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log('Bullet rewrite request aborted.');
+        return;
+      }
+      console.error(err);
+      const isJsonError = err.message && (err.message.includes('JSON') || err.message.includes('Unexpected token'));
+      const errorMsg = isJsonError ? 'Failed to parse AI suggestions response.' : (err.message || 'Unable to generate suggestions due to a network issue.');
+      setRewriteError(errorMsg);
+      toast.dismiss(loaderToastId);
+      toast.error(errorMsg);
+    } finally {
+      if (abortControllerRef.current?.signal === signal) {
+        setIsRewriteLoading(false);
+      }
+    }
+  };
+
+  const handleRegenerateSuggestions = async () => {
+    // Analytics hook
+    console.log('bullet_rewrite_regenerated');
+    await handleRewriteBullet(true);
+  };
+
+  const handleAcceptRewriteBullet = (suggestedText: string) => {
+    const exp = workExperience[selectedRewriteExpIdx];
+    if (!exp) return;
+    const bullets = extractBullets(exp.description || '');
+    if (bullets.length === 0) return;
+
+    const originalBullet = bullets[selectedRewriteBulletIdx];
+    
+    // Push original to the multi-level undo stack
+    setBulletUndoStack(prev => [...prev, originalBullet]);
+
+    // Update form state
+    bullets[selectedRewriteBulletIdx] = suggestedText;
+    const formattedHtml = `<ul>${bullets.map(b => `<li>${b}</li>`).join('')}</ul>`;
+    setValue(`workExperience.${selectedRewriteExpIdx}.description`, formattedHtml, {
+      shouldDirty: true,
+      shouldTouch: true
+    });
+
+    // Analytics hook
+    console.log('bullet_rewrite_accepted', { suggestedText });
+    toast.success('Bullet updated successfully.');
+  };
+
+  const handleUndoRewrite = () => {
+    if (bulletUndoStack.length === 0) {
+      toast.error('No changes left to undo.');
+      return;
+    }
+
+    const exp = workExperience[selectedRewriteExpIdx];
+    if (!exp) return;
+    const bullets = extractBullets(exp.description || '');
+    if (bullets.length === 0) return;
+
+    // Pop original from stack
+    const prevBullet = bulletUndoStack[bulletUndoStack.length - 1];
+    setBulletUndoStack(prev => prev.slice(0, -1));
+
+    bullets[selectedRewriteBulletIdx] = prevBullet;
+    const formattedHtml = `<ul>${bullets.map(b => `<li>${b}</li>`).join('')}</ul>`;
+    setValue(`workExperience.${selectedRewriteExpIdx}.description`, formattedHtml, {
+      shouldDirty: true,
+      shouldTouch: true
+    });
+
+    // Analytics hook
+    console.log('bullet_rewrite_undo');
+    toast.success('Changes reverted successfully.');
+  };
+
+  // Clamp score helper
+  const clampScore = (score: number) => Math.min(100, Math.max(0, score));
+
+  const handleApplyBestSuggestion = () => {
+    if (!rewriteSuggestions) return;
+    
+    // Priority order for score tie resolution: atsOptimized, actionOriented, quantified, concise
+    const priorityKeys = ['atsOptimized', 'actionOriented', 'quantified', 'concise'] as const;
+    
+    let bestKey: typeof priorityKeys[number] = priorityKeys[0];
+    let bestScore = clampScore(rewriteSuggestions[bestKey].score);
+
+    for (let i = 1; i < priorityKeys.length; i++) {
+      const key = priorityKeys[i];
+      const score = clampScore(rewriteSuggestions[key].score);
+      if (score > bestScore) {
+        bestScore = score;
+        bestKey = key;
+      }
+    }
+
+    const bestText = editedSuggestions[bestKey] || rewriteSuggestions[bestKey].text;
+    handleAcceptRewriteBullet(bestText);
+
+    // Analytics hook
+    console.log('bullet_rewrite_apply_best', { type: bestKey });
+  };
+
+  const handleNavigateHistory = (direction: 'back' | 'forward') => {
+    if (direction === 'back') {
+      if (rewriteHistoryIdx <= 0) return;
+      const newIdx = rewriteHistoryIdx - 1;
+      const data = rewriteHistory[newIdx];
+      setRewriteSuggestions(data);
+      setEditedSuggestions({
+        actionOriented: data.actionOriented.text,
+        quantified: data.quantified.text,
+        concise: data.concise.text,
+        atsOptimized: data.atsOptimized.text,
+      });
+      setRewriteHistoryIdx(newIdx);
+      toast.success(`Loaded generation #${newIdx + 1}`);
+      
+      // Analytics hook
+      console.log('bullet_rewrite_history_previous');
+    } else {
+      if (rewriteHistoryIdx >= rewriteHistory.length - 1) return;
+      const newIdx = rewriteHistoryIdx + 1;
+      const data = rewriteHistory[newIdx];
+      setRewriteSuggestions(data);
+      setEditedSuggestions({
+        actionOriented: data.actionOriented.text,
+        quantified: data.quantified.text,
+        concise: data.concise.text,
+        atsOptimized: data.atsOptimized.text,
+      });
+      setRewriteHistoryIdx(newIdx);
+      toast.success(`Loaded generation #${newIdx + 1}`);
+      
+      // Analytics hook
+      console.log('bullet_rewrite_history_next');
+    }
+  };
 
   const starterPrompts = [
     { label: '🔍 Critique My Resume', text: 'Critique my resume structure and metrics, and suggest improvements.' },
@@ -373,6 +641,54 @@ export function AIPanel({ onSaveTailoredVersion }: AIPanelProps = {}) {
   const [repairSuggestion, setRepairSuggestion] = useState('');
   const [isRepairLoading, setIsRepairLoading] = useState(false);
   const [repairError, setRepairError] = useState<string | null>(null);
+
+  // ==========================================================================
+  // ATS SKILL GAP ANALYZER STATE
+  // ==========================================================================
+  interface SkillGapPlacement {
+    section: 'skills' | 'experience' | 'summary' | 'projects' | 'certifications';
+    reason: string;
+    example?: string;
+  }
+  interface SkillGapRecommendation {
+    skill: string;
+    priority: 'critical' | 'important' | 'nice-to-have';
+    category: 'technical' | 'soft' | 'domain' | 'tool';
+    placement: SkillGapPlacement[];
+    confidence: number;
+  }
+  interface KeywordInsight {
+    keyword: string;
+    status: 'present' | 'missing' | 'overused';
+    frequency?: number;
+    suggestion?: string;
+  }
+  interface SkillGapWeakArea {
+    area: string;
+    reason: string;
+    actionItem: string;
+  }
+  interface SkillGapResult {
+    keywordMatchPercentage: number;
+    confidenceScore: number;
+    summary: string;
+    criticalMissing: SkillGapRecommendation[];
+    importantMissing: SkillGapRecommendation[];
+    niceToHave: SkillGapRecommendation[];
+    strongKeywords: KeywordInsight[];
+    missingKeywords: KeywordInsight[];
+    overusedKeywords: KeywordInsight[];
+    weakAreas: SkillGapWeakArea[];
+    actionItems: string[];
+  }
+
+  const [skillGapJD, setSkillGapJD] = useState('');
+  const [atsSkillGapResult, setAtsSkillGapResult] = useState<SkillGapResult | null>(null);
+  const [isSkillGapLoading, setIsSkillGapLoading] = useState(false);
+  const [skillGapError, setSkillGapError] = useState<string | null>(null);
+  const [expandedSkillKey, setExpandedSkillKey] = useState<string | null>(null);
+  const skillGapAbortRef = useRef<AbortController | null>(null);
+  const skillGapCache = useRef<Map<string, { result: SkillGapResult; createdAt: number }>>(new Map());
 
   const workExperience = watch('workExperience') || [];
   const projects = watch('projects') || [];
@@ -1247,9 +1563,276 @@ export function AIPanel({ onSaveTailoredVersion }: AIPanelProps = {}) {
     toast.info('Suggestion discarded.');
   };
 
+  // ==========================================================================
+  // SKILL GAP ANALYZER HELPERS & HANDLERS
+  // ==========================================================================
+
+  // Normalize and sort skill gap result: dedup across priority groups and sort by confidence desc then alphabetical
+  const normalizeAndSortSkillGapResult = (result: SkillGapResult): SkillGapResult => {
+    const seen = new Set<string>();
+    const dedup = (skills: SkillGapRecommendation[]) =>
+      skills
+        .filter(s => {
+          const key = s.skill.trim().toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .sort((a, b) =>
+          b.confidence !== a.confidence
+            ? b.confidence - a.confidence
+            : a.skill.localeCompare(b.skill)
+        );
+
+    return {
+      ...result,
+      criticalMissing: dedup(result.criticalMissing || []),
+      importantMissing: dedup(result.importantMissing || []),
+      niceToHave: dedup(result.niceToHave || []),
+    };
+  };
+
+  // Add a single skill from gap analysis to resume skills
+  const handleAddSkillFromGap = (skill: string, category: string) => {
+    const target = category === 'soft' ? 'skills.softSkills' : 'skills.technicalSkills';
+    const current: string[] = getValues(target as any) || [];
+    const normalizedNew = skill.trim().toLowerCase();
+    const alreadyExists = current.some(s => s.trim().toLowerCase() === normalizedNew);
+    if (alreadyExists) {
+      toast.info(`'${skill}' is already in your skills.`);
+      return;
+    }
+    setValue(target as any, [...current, skill.trim()], { shouldDirty: true, shouldTouch: true });
+    toast.success(`Added '${skill}' to your skills!`);
+    console.log('skill_gap_skill_added', { skill, category });
+  };
+
+  // Add all critical skills at once
+  const handleAddAllCriticalSkills = () => {
+    if (!atsSkillGapResult) return;
+    const currentTech: string[] = getValues('skills.technicalSkills') || [];
+    const currentSoft: string[] = getValues('skills.softSkills') || [];
+    const allCurrentLower = [...currentTech, ...currentSoft].map(s => s.trim().toLowerCase());
+    let addedCount = 0;
+    const newTech = [...currentTech];
+    const newSoft = [...currentSoft];
+    atsSkillGapResult.criticalMissing.forEach(rec => {
+      const normalized = rec.skill.trim().toLowerCase();
+      if (!allCurrentLower.includes(normalized)) {
+        allCurrentLower.push(normalized);
+        if (rec.category === 'soft') newSoft.push(rec.skill.trim());
+        else newTech.push(rec.skill.trim());
+        addedCount++;
+      }
+    });
+    if (addedCount === 0) {
+      toast.info('All critical skills are already in your resume.');
+      return;
+    }
+    setValue('skills.technicalSkills', newTech, { shouldDirty: true, shouldTouch: true });
+    setValue('skills.softSkills', newSoft, { shouldDirty: true, shouldTouch: true });
+    toast.success(`Added ${addedCount} critical skill${addedCount > 1 ? 's' : ''} to your resume!`);
+    console.log('skill_gap_add_all_critical', { count: addedCount });
+  };
+
+  // Add all important skills at once
+  const handleAddAllImportantSkills = () => {
+    if (!atsSkillGapResult) return;
+    const currentTech: string[] = getValues('skills.technicalSkills') || [];
+    const currentSoft: string[] = getValues('skills.softSkills') || [];
+    const allCurrentLower = [...currentTech, ...currentSoft].map(s => s.trim().toLowerCase());
+    let addedCount = 0;
+    const newTech = [...currentTech];
+    const newSoft = [...currentSoft];
+    atsSkillGapResult.importantMissing.forEach(rec => {
+      const normalized = rec.skill.trim().toLowerCase();
+      if (!allCurrentLower.includes(normalized)) {
+        allCurrentLower.push(normalized);
+        if (rec.category === 'soft') newSoft.push(rec.skill.trim());
+        else newTech.push(rec.skill.trim());
+        addedCount++;
+      }
+    });
+    if (addedCount === 0) {
+      toast.info('All important skills are already in your resume.');
+      return;
+    }
+    setValue('skills.technicalSkills', newTech, { shouldDirty: true, shouldTouch: true });
+    setValue('skills.softSkills', newSoft, { shouldDirty: true, shouldTouch: true });
+    toast.success(`Added ${addedCount} important skill${addedCount > 1 ? 's' : ''} to your resume!`);
+    console.log('skill_gap_add_all_important', { count: addedCount });
+  };
+
+  // Copy all suggestions to clipboard
+  const handleCopySkillGapSuggestions = () => {
+    if (!atsSkillGapResult) return;
+    const lines: string[] = [
+      `ATS Skill Gap Analysis — Keyword Match: ${atsSkillGapResult.keywordMatchPercentage}%`,
+      '',
+      '--- CRITICAL MISSING SKILLS ---',
+      ...atsSkillGapResult.criticalMissing.map(s => `• ${s.skill} (${s.category}) — ${s.placement[0]?.reason || ''}`),
+      '',
+      '--- IMPORTANT SKILLS ---',
+      ...atsSkillGapResult.importantMissing.map(s => `• ${s.skill} (${s.category}) — ${s.placement[0]?.reason || ''}`),
+      '',
+      '--- NICE-TO-HAVE ---',
+      ...atsSkillGapResult.niceToHave.map(s => `• ${s.skill}`),
+      '',
+      '--- WEAK AREAS ---',
+      ...atsSkillGapResult.weakAreas.map(w => `• ${w.area}: ${w.actionItem}`),
+      '',
+      '--- ACTION ITEMS ---',
+      ...atsSkillGapResult.actionItems.map((a, i) => `${i + 1}. ${a}`),
+    ];
+    navigator.clipboard.writeText(lines.join('\n'));
+    toast.success('All suggestions copied to clipboard!');
+    console.log('skill_gap_copy_suggestions');
+  };
+
+  // Download skill gap report as .txt
+  const handleDownloadSkillGapReport = () => {
+    if (!atsSkillGapResult) return;
+    const r = atsSkillGapResult;
+    const lines = [
+      '========================================',
+      'ATS SKILL GAP ANALYSIS REPORT',
+      '========================================',
+      '',
+      `Keyword Match: ${r.keywordMatchPercentage}%`,
+      `Confidence Score: ${r.confidenceScore}`,
+      '',
+      'SUMMARY',
+      '-------',
+      r.summary,
+      '',
+      'CRITICAL MISSING SKILLS',
+      '-----------------------',
+      ...r.criticalMissing.map(s => [
+        `Skill: ${s.skill}  |  Category: ${s.category}  |  Confidence: ${s.confidence}%`,
+        ...s.placement.map(p => `  → ${p.section.toUpperCase()}: ${p.reason}${p.example ? `\n    Example: "${p.example}"` : ''}`),
+        ''
+      ]).flat(),
+      'IMPORTANT SKILLS',
+      '----------------',
+      ...r.importantMissing.map(s => [
+        `Skill: ${s.skill}  |  Category: ${s.category}  |  Confidence: ${s.confidence}%`,
+        ...s.placement.map(p => `  → ${p.section.toUpperCase()}: ${p.reason}${p.example ? `\n    Example: "${p.example}"` : ''}`),
+        ''
+      ]).flat(),
+      'NICE-TO-HAVE SKILLS',
+      '-------------------',
+      ...r.niceToHave.map(s => `${s.skill}  (${s.category})`),
+      '',
+      'WEAK AREAS',
+      '----------',
+      ...r.weakAreas.map(w => `Area: ${w.area}\nReason: ${w.reason}\nAction: ${w.actionItem}\n`),
+      'ACTION ITEMS',
+      '------------',
+      ...r.actionItems.map((a, i) => `${i + 1}. ${a}`),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'skill-gap-report.txt';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('Report downloaded as skill-gap-report.txt!');
+    console.log('skill_gap_download_recommendations');
+  };
+
+  // Main skill gap analysis handler (AbortController + cache)
+  const handleRunSkillGapAnalysis = async (bypassCache = false) => {
+    const jd = skillGapJD.trim();
+    if (!jd) {
+      toast.error('Please paste a job description first.');
+      return;
+    }
+    if (jd.length > 25000) {
+      toast.error('Job description is too long. Please trim it to under 25,000 characters.');
+      return;
+    }
+
+    // Abort any previous in-flight request
+    if (skillGapAbortRef.current) {
+      skillGapAbortRef.current.abort();
+    }
+    skillGapAbortRef.current = new AbortController();
+    const { signal } = skillGapAbortRef.current;
+
+    // Cache check (30-min TTL) — bypassed when reanalyzing
+    const now = Date.now();
+    const CACHE_TTL = 30 * 60 * 1000;
+    if (!bypassCache) {
+      const cached = skillGapCache.current.get(jd);
+      if (cached && now - cached.createdAt < CACHE_TTL) {
+        setAtsSkillGapResult(normalizeAndSortSkillGapResult(cached.result));
+        setSkillGapError(null);
+        setIsSkillGapLoading(false);
+        toast.success('Loaded from cache. Click Reanalyze for a fresh result.');
+        return;
+      }
+    }
+
+    setIsSkillGapLoading(true);
+    setSkillGapError(null);
+    console.log('skill_gap_analysis_started', { jdLength: jd.length });
+    const loaderToastId = toast.loading('Analyzing skill gaps against job description...');
+
+    try {
+      const resumeData = getValues();
+      const res = await fetch('/api/ai?action=skill-gap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resumeData, jobDescription: jd }),
+        signal,
+      });
+      if (!res.ok) throw new Error(`Server responded with status ${res.status}.`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      const normalized = normalizeAndSortSkillGapResult(data as SkillGapResult);
+
+      // Store in cache and prune expired entries
+      skillGapCache.current.set(jd, { result: normalized, createdAt: now });
+      skillGapCache.current.forEach((v, k) => {
+        if (now - v.createdAt >= CACHE_TTL) skillGapCache.current.delete(k);
+      });
+
+      setAtsSkillGapResult(normalized);
+      toast.dismiss(loaderToastId);
+      toast.success('Skill gap analysis complete!');
+      console.log('skill_gap_analysis_completed', { match: normalized.keywordMatchPercentage });
+      if (bypassCache) console.log('skill_gap_reanalyzed', { match: normalized.keywordMatchPercentage });
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        console.log('Skill gap request aborted (superseded by newer request).');
+        return;
+      }
+      console.error('Skill gap analysis error:', err);
+      const isOffline = !navigator.onLine;
+      const errMsg = isOffline
+        ? 'You appear to be offline. Please check your connection and try again.'
+        : err.message?.includes('JSON') || err.message?.includes('parse')
+        ? 'Failed to parse AI response. Please try reanalyzing.'
+        : err.message || 'Analysis failed. Please try again.';
+      setSkillGapError(errMsg);
+      toast.dismiss(loaderToastId);
+      toast.error(errMsg);
+    } finally {
+      if (skillGapAbortRef.current?.signal === signal) {
+        setIsSkillGapLoading(false);
+      }
+    }
+  };
+
   const tabsList = [
     { id: 'copilot', label: 'Co-Pilot', icon: <Sparkles className="w-3 h-3" /> },
+    { id: 'rewriter', label: 'Bullet Rewriter', icon: <Sparkles className="w-3 h-3" /> },
     { id: 'ats', label: 'ATS Score', icon: <TrendingUp className="w-3 h-3" /> },
+    { id: 'skill-gap', label: 'Skill Gap', icon: <Target className="w-3 h-3" /> },
     { id: 'tailor', label: 'Tailor', icon: <Target className="w-3 h-3" /> },
     { id: 'coverletter', label: 'Cover Letter', icon: <FileText className="w-3 h-3" /> },
     { id: 'interview', label: 'Interview Prep', icon: <HelpCircle className="w-3 h-3" /> },
@@ -1917,6 +2500,525 @@ export function AIPanel({ onSaveTailoredVersion }: AIPanelProps = {}) {
             )}
           </div>
         )}
+
+        {/* ====================================================================
+           TAB: ATS SKILL GAP ANALYZER
+           ==================================================================== */}
+        {activeTab === 'skill-gap' && (() => {
+          // Compute coverage per category from result + current resume skills
+          const computeCoverage = (result: SkillGapResult) => {
+            const currentTech: string[] = watch('skills.technicalSkills') || [];
+            const currentSoft: string[] = watch('skills.softSkills') || [];
+            const allCurrentLower = [...currentTech, ...currentSoft].map(s => s.trim().toLowerCase());
+            const resumeText = JSON.stringify(getValues()).toLowerCase();
+            const allRecs = [...result.criticalMissing, ...result.importantMissing, ...result.niceToHave];
+            const cats = [
+              { key: 'technical' as const, label: 'Technical Skills', color: 'indigo' },
+              { key: 'soft' as const, label: 'Soft Skills', color: 'purple' },
+              { key: 'domain' as const, label: 'Domain Knowledge', color: 'amber' },
+              { key: 'tool' as const, label: 'Tools & Platforms', color: 'cyan' },
+            ];
+            return cats.map(({ key, label, color }) => {
+              const catRecs = allRecs.filter(s => s.category === key);
+              if (catRecs.length === 0) return { key, label, color, coverage: 100, present: 0, total: 0 };
+              const present = catRecs.filter(s =>
+                allCurrentLower.includes(s.skill.trim().toLowerCase()) ||
+                resumeText.includes(s.skill.trim().toLowerCase())
+              ).length;
+              const coverage = Math.round((present / catRecs.length) * 100);
+              return { key, label, color, coverage, present, total: catRecs.length };
+            });
+          };
+
+          const coverage = atsSkillGapResult ? computeCoverage(atsSkillGapResult) : [];
+          const matchPct = atsSkillGapResult?.keywordMatchPercentage ?? 0;
+          const matchColor = matchPct >= 75 ? 'text-emerald-400' : matchPct >= 50 ? 'text-amber-400' : 'text-rose-400';
+          const matchBarColor = matchPct >= 75 ? 'bg-emerald-500' : matchPct >= 50 ? 'bg-amber-500' : 'bg-rose-500';
+
+          // Helper to get coverage bar color class
+          const covColor = (pct: number) => pct >= 75 ? 'bg-emerald-500' : pct >= 50 ? 'bg-amber-500' : 'bg-rose-500';
+          const covText = (pct: number) => pct >= 75 ? 'text-emerald-400' : pct >= 50 ? 'text-amber-400' : 'text-rose-400';
+
+          // Section label display
+          const sectionLabel: Record<string, string> = {
+            skills: 'Skills Section',
+            experience: 'Experience Bullet',
+            summary: 'Professional Summary',
+            projects: 'Project Description',
+            certifications: 'Certifications',
+          };
+
+          // Render a single collapsible skill card
+          const renderSkillCard = (rec: SkillGapRecommendation, priorityKey: string, borderColor: string, bgColor: string, badgeColor: string) => {
+            const cardKey = `${priorityKey}-${rec.skill}`;
+            const isExpanded = expandedSkillKey === cardKey;
+            const isAdded = (() => {
+              const tech: string[] = getValues('skills.technicalSkills') || [];
+              const soft: string[] = getValues('skills.softSkills') || [];
+              return [...tech, ...soft].some(s => s.trim().toLowerCase() === rec.skill.trim().toLowerCase());
+            })();
+
+            return (
+              <div
+                key={cardKey}
+                className={`rounded-xl border transition-all duration-300 ${isAdded ? 'border-emerald-500/30 bg-emerald-500/5' : `${borderColor} ${bgColor}`} overflow-hidden`}
+              >
+                {/* Card header */}
+                <div
+                  className="flex items-center justify-between px-3.5 py-2.5 cursor-pointer select-none"
+                  onClick={() => setExpandedSkillKey(isExpanded ? null : cardKey)}
+                  role="button"
+                  aria-expanded={isExpanded}
+                  aria-label={`Toggle details for ${rec.skill}`}
+                  tabIndex={0}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setExpandedSkillKey(isExpanded ? null : cardKey); } }}
+                >
+                  <div className="flex items-center gap-2 flex-grow min-w-0">
+                    <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded border flex-shrink-0 ${badgeColor}`}>
+                      {rec.category}
+                    </span>
+                    <span className="text-[10px] font-bold text-slate-200 truncate">{rec.skill}</span>
+                    {isAdded && (
+                      <span className="text-[8px] font-black text-emerald-400 flex items-center gap-0.5 flex-shrink-0">
+                        <Check className="w-2.5 h-2.5" /> Added
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* Confidence bar mini */}
+                    <div className="hidden sm:flex items-center gap-1.5">
+                      <div className="w-14 h-1 bg-slate-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-indigo-500 transition-all duration-500" style={{ width: `${rec.confidence}%` }} />
+                      </div>
+                      <span className="text-[8px] text-slate-500 font-mono">{rec.confidence}%</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); handleAddSkillFromGap(rec.skill, rec.category); }}
+                      disabled={isAdded}
+                      aria-label={`Add ${rec.skill} to skills`}
+                      className={`text-[8px] font-bold px-2 py-0.5 rounded-lg transition-all flex items-center gap-0.5 focus:ring-1 focus:ring-indigo-500 focus-visible:outline-none ${isAdded ? 'text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 cursor-not-allowed opacity-60' : 'text-white bg-indigo-600 hover:bg-indigo-500 cursor-pointer'}`}
+                    >
+                      {isAdded ? <Check className="w-2.5 h-2.5" /> : <Plus className="w-2.5 h-2.5" />}
+                      {isAdded ? 'Added' : 'Add'}
+                    </button>
+                    {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-slate-500" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-500" />}
+                  </div>
+                </div>
+
+                {/* Expanded placement details */}
+                {isExpanded && (
+                  <div className="px-3.5 pb-3.5 space-y-2.5 border-t border-slate-800/60 pt-2.5 animate-fade-in">
+                    <p className="text-[9px] text-slate-500 uppercase font-black tracking-widest">Smart Placement Recommendations</p>
+                    {rec.placement.map((p, pIdx) => (
+                      <div key={pIdx} className="p-2.5 bg-slate-950/60 border border-slate-800/60 rounded-xl space-y-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[8px] font-black uppercase px-1.5 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/25 text-indigo-400">
+                            {sectionLabel[p.section] || p.section}
+                          </span>
+                        </div>
+                        <p className="text-[9.5px] text-slate-300 leading-relaxed font-light">{p.reason}</p>
+                        {p.example && (
+                          <p className="text-[9px] text-emerald-400 italic bg-emerald-500/5 border border-emerald-500/10 rounded-lg p-2 leading-relaxed">
+                            ✏️ &quot;{p.example}&quot;
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          };
+
+          return (
+            <div className="space-y-5 animate-fade-in duration-200">
+
+              {/* ── Header ─── */}
+              <div className="p-4 bg-gradient-to-br from-emerald-950/30 to-slate-900/20 border border-slate-900 rounded-2xl space-y-1">
+                <div className="flex items-center gap-2">
+                  <Target className="w-4 h-4 text-emerald-400" />
+                  <h4 className="text-xs font-black uppercase tracking-wider text-white">ATS Skill Gap Analyzer</h4>
+                </div>
+                <p className="text-[10px] text-slate-400 font-light leading-relaxed">
+                  Paste a job description to identify exactly which skills are missing from your resume and where to add them for maximum ATS impact.
+                </p>
+              </div>
+
+              {/* ── JD Input Panel ─── */}
+              <div className="space-y-3 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="skill-gap-jd" className="text-[9px] uppercase font-black tracking-widest text-slate-400 flex items-center gap-1">
+                    <FileText className="w-3 h-3" /> Job Description
+                  </label>
+                  {skillGapJD.trim() && (
+                    <button
+                      type="button"
+                      onClick={() => { setSkillGapJD(''); setAtsSkillGapResult(null); setSkillGapError(null); }}
+                      aria-label="Clear job description"
+                      className="text-[8px] font-bold text-slate-500 hover:text-rose-400 transition-colors cursor-pointer flex items-center gap-0.5 focus:ring-1 focus:ring-indigo-500 focus-visible:outline-none rounded"
+                    >
+                      <X className="w-3 h-3" /> Clear
+                    </button>
+                  )}
+                </div>
+                <textarea
+                  id="skill-gap-jd"
+                  value={skillGapJD}
+                  onChange={e => setSkillGapJD(e.target.value)}
+                  rows={4}
+                  maxLength={25000}
+                  disabled={isSkillGapLoading}
+                  aria-label="Paste job description here"
+                  placeholder="Paste the full job description here to discover missing skills and improve ATS compatibility..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-[10px] text-white placeholder-slate-600 focus:ring-1 focus:ring-indigo-500 focus:outline-none leading-relaxed resize-none disabled:opacity-60"
+                />
+                {skillGapJD.length > 20000 && (
+                  <p className="text-[8px] text-amber-400">Large job description ({skillGapJD.length.toLocaleString()} chars). May affect response quality.</p>
+                )}
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    id="skill-gap-analyze-btn"
+                    onClick={() => handleRunSkillGapAnalysis(false)}
+                    disabled={isSkillGapLoading || !skillGapJD.trim()}
+                    aria-label="Analyze skill gaps"
+                    aria-busy={isSkillGapLoading}
+                    className="flex-grow flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl disabled:opacity-40 transition-all shadow-md shadow-emerald-600/10 cursor-pointer focus:ring-2 focus:ring-emerald-500 focus-visible:outline-none"
+                  >
+                    {isSkillGapLoading ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" />Analyzing...</>
+                    ) : (
+                      <><Target className="w-3.5 h-3.5" />Analyze Skill Gaps</>
+                    )}
+                  </button>
+                  {atsSkillGapResult && !isSkillGapLoading && (
+                    <button
+                      type="button"
+                      onClick={() => handleRunSkillGapAnalysis(true)}
+                      aria-label="Reanalyze skill gaps (bypass cache)"
+                      className="flex items-center gap-1 px-3 py-2.5 text-[9px] font-bold text-indigo-400 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-xl transition-all cursor-pointer flex-shrink-0 focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Reanalyze
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* ── Empty State ─── */}
+              {!skillGapJD.trim() && !atsSkillGapResult && !isSkillGapLoading && (
+                <div className="bg-slate-950/40 border border-dashed border-slate-800/80 rounded-2xl p-8 text-center flex flex-col items-center gap-3 group hover:border-emerald-500/30 transition-all duration-300 animate-fade-in">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center group-hover:bg-emerald-500/20 transition-all">
+                    <Target className="w-5 h-5 text-emerald-400" />
+                  </div>
+                  <div className="space-y-1">
+                    <h4 className="text-sm font-bold text-slate-200">Paste a Job Description</h4>
+                    <p className="text-[10px] text-slate-500 max-w-[240px] leading-relaxed font-light">
+                      Discover missing skills and improve ATS compatibility by analyzing your resume against a target job description.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Error ─── */}
+              {skillGapError && (
+                <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-400 rounded-xl text-xs flex items-center gap-2 animate-fade-in">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{skillGapError}</span>
+                </div>
+              )}
+
+              {/* ── Shimmer skeleton loading ─── */}
+              {isSkillGapLoading && (
+                <div className="space-y-4" aria-busy="true" aria-live="polite">
+                  <span className="sr-only">Analyzing skill gaps against job description, please wait...</span>
+                  {/* Score bar skeleton */}
+                  <div className="h-16 w-full rounded-2xl shimmer-effect opacity-60" />
+                  {/* Coverage grid skeleton */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {[1, 2, 3, 4].map(i => (
+                      <div key={i} className="h-14 rounded-xl shimmer-effect opacity-55" />
+                    ))}
+                  </div>
+                  {/* Skill cards skeleton */}
+                  {[1, 2, 3].map(i => (
+                    <div key={i} className="h-12 rounded-xl shimmer-effect opacity-60" />
+                  ))}
+                </div>
+              )}
+
+              {/* ── Results ─── */}
+              {!isSkillGapLoading && atsSkillGapResult && (
+                <div className="space-y-5">
+
+                  {/* Match Score + Confidence */}
+                  <div className="p-4 bg-slate-900/30 border border-slate-900 rounded-2xl space-y-3 relative overflow-hidden">
+                    <div className="absolute top-[-40px] right-[-40px] w-24 h-24 bg-emerald-500/8 rounded-full blur-2xl pointer-events-none" />
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[8px] uppercase font-black tracking-widest text-slate-500">Keyword Match</p>
+                        <span className={`text-2xl font-black font-mono ${matchColor}`}>{matchPct}%</span>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[8px] uppercase font-black tracking-widest text-slate-500">AI Confidence</p>
+                        <span className="text-2xl font-black font-mono text-slate-300">{atsSkillGapResult.confidenceScore}</span>
+                      </div>
+                    </div>
+                    <div className="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full ${matchBarColor} transition-all duration-700 rounded-full`}
+                        style={{ width: `${matchPct}%` }}
+                        role="progressbar"
+                        aria-valuenow={matchPct}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`Keyword match percentage: ${matchPct}%`}
+                      />
+                    </div>
+                    <p className="text-[9.5px] text-slate-400 leading-relaxed font-light">{atsSkillGapResult.summary}</p>
+                  </div>
+
+                  {/* Coverage Dashboard */}
+                  <div className="p-4 bg-slate-900/20 border border-slate-900 rounded-2xl space-y-3">
+                    <h5 className="text-[9px] uppercase font-black tracking-widest text-slate-400 flex items-center gap-1.5">
+                      <TrendingUp className="w-3 h-3 text-indigo-400" /> Category Coverage Dashboard
+                    </h5>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {coverage.map(cat => (
+                        <div key={cat.key} className="bg-slate-950/40 border border-slate-900/60 p-2.5 rounded-xl space-y-1">
+                          <div className="flex justify-between items-center">
+                            <span className="text-[9px] font-bold text-slate-300">{cat.label}</span>
+                            <span className={`text-[9px] font-black font-mono ${covText(cat.coverage)}`}>
+                              {cat.total === 0 ? '✓' : `${cat.coverage}%`}
+                            </span>
+                          </div>
+                          <div className="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                            <div
+                              className={`h-full ${covColor(cat.coverage)} transition-all duration-700 rounded-full`}
+                              style={{ width: `${cat.total === 0 ? 100 : cat.coverage}%` }}
+                            />
+                          </div>
+                          {cat.total > 0 && (
+                            <p className="text-[8px] text-slate-500">
+                              {cat.present}/{cat.total} gaps addressed
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Bulk Actions */}
+                  <div className="flex flex-wrap gap-2">
+                    {atsSkillGapResult.criticalMissing.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleAddAllCriticalSkills}
+                        aria-label="Add all critical missing skills to resume"
+                        className="flex items-center gap-1.5 px-3 py-2 text-[9px] font-bold text-white bg-rose-600 hover:bg-rose-500 rounded-xl transition-all cursor-pointer focus:ring-2 focus:ring-rose-500 focus-visible:outline-none"
+                      >
+                        <Plus className="w-3 h-3" /> Add All Critical Skills
+                      </button>
+                    )}
+                    {atsSkillGapResult.importantMissing.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleAddAllImportantSkills}
+                        aria-label="Add all important missing skills to resume"
+                        className="flex items-center gap-1.5 px-3 py-2 text-[9px] font-bold text-white bg-amber-600 hover:bg-amber-500 rounded-xl transition-all cursor-pointer focus:ring-2 focus:ring-amber-500 focus-visible:outline-none"
+                      >
+                        <Plus className="w-3 h-3" /> Add All Important Skills
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleCopySkillGapSuggestions}
+                      aria-label="Copy all suggestions to clipboard"
+                      className="flex items-center gap-1.5 px-3 py-2 text-[9px] font-bold text-slate-300 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-xl transition-all cursor-pointer focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                    >
+                      <Copy className="w-3 h-3" /> Copy Suggestions
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDownloadSkillGapReport}
+                      aria-label="Download skill gap report as text file"
+                      className="flex items-center gap-1.5 px-3 py-2 text-[9px] font-bold text-slate-300 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-xl transition-all cursor-pointer focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                    >
+                      <Download className="w-3 h-3" /> Download Report
+                    </button>
+                  </div>
+
+                  {/* Critical Missing Skills */}
+                  {atsSkillGapResult.criticalMissing.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 px-1">
+                        <span className="w-2 h-2 rounded-full bg-rose-500 flex-shrink-0" />
+                        <h5 className="text-[9px] uppercase font-black tracking-widest text-rose-400">
+                          Critical Missing Skills ({atsSkillGapResult.criticalMissing.length})
+                        </h5>
+                        <span className="text-[8px] text-slate-500 font-light">Blocking ATS pass</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {atsSkillGapResult.criticalMissing.map(rec =>
+                          renderSkillCard(rec, 'critical', 'border-rose-900/50', 'bg-rose-950/20', 'bg-rose-500/10 border-rose-500/20 text-rose-400')
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Important Missing Skills */}
+                  {atsSkillGapResult.importantMissing.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 px-1">
+                        <span className="w-2 h-2 rounded-full bg-amber-500 flex-shrink-0" />
+                        <h5 className="text-[9px] uppercase font-black tracking-widest text-amber-400">
+                          Important Skills ({atsSkillGapResult.importantMissing.length})
+                        </h5>
+                        <span className="text-[8px] text-slate-500 font-light">Significantly improves chances</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {atsSkillGapResult.importantMissing.map(rec =>
+                          renderSkillCard(rec, 'important', 'border-amber-900/40', 'bg-amber-950/15', 'bg-amber-500/10 border-amber-500/20 text-amber-400')
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Nice-to-Have Skills */}
+                  {atsSkillGapResult.niceToHave.length > 0 && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 px-1">
+                        <span className="w-2 h-2 rounded-full bg-slate-500 flex-shrink-0" />
+                        <h5 className="text-[9px] uppercase font-black tracking-widest text-slate-400">
+                          Nice-to-Have ({atsSkillGapResult.niceToHave.length})
+                        </h5>
+                        <span className="text-[8px] text-slate-500 font-light">Differentiators</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {atsSkillGapResult.niceToHave.map(rec =>
+                          renderSkillCard(rec, 'nice', 'border-slate-800/50', 'bg-slate-900/20', 'bg-slate-500/10 border-slate-500/25 text-slate-400')
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Keyword Insights */}
+                  {(atsSkillGapResult.strongKeywords.length > 0 || atsSkillGapResult.missingKeywords.length > 0 || atsSkillGapResult.overusedKeywords.length > 0) && (
+                    <div className="p-4 bg-slate-900/20 border border-slate-900 rounded-2xl space-y-3">
+                      <h5 className="text-[9px] uppercase font-black tracking-widest text-slate-400 flex items-center gap-1.5">
+                        <TrendingUp className="w-3 h-3 text-indigo-400" /> Keyword Insights
+                      </h5>
+
+                      {/* Strong Keywords */}
+                      {atsSkillGapResult.strongKeywords.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[8px] uppercase font-black text-emerald-400 tracking-wider flex items-center gap-1">
+                            <Check className="w-2.5 h-2.5" /> Strong Keywords
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {atsSkillGapResult.strongKeywords.map((kw, i) => (
+                              <span
+                                key={i}
+                                title={kw.suggestion}
+                                className="text-[8px] px-2 py-0.5 rounded-full border border-emerald-500/25 bg-emerald-500/10 text-emerald-400 font-semibold cursor-help"
+                              >
+                                {kw.keyword}{kw.frequency ? ` ×${kw.frequency}` : ''}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Missing Keywords */}
+                      {atsSkillGapResult.missingKeywords.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[8px] uppercase font-black text-rose-400 tracking-wider flex items-center gap-1">
+                            <X className="w-2.5 h-2.5" /> Missing Keywords
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {atsSkillGapResult.missingKeywords.map((kw, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => handleAddSkillFromGap(kw.keyword, 'technical')}
+                                title={kw.suggestion}
+                                aria-label={`Add missing keyword: ${kw.keyword}`}
+                                className="text-[8px] px-2 py-0.5 rounded-full border border-rose-500/20 bg-rose-500/8 text-rose-400 font-semibold cursor-pointer hover:border-rose-500/50 hover:bg-rose-500/20 transition-all flex items-center gap-0.5 focus:ring-1 focus:ring-rose-500 focus-visible:outline-none"
+                              >
+                                {kw.keyword} <Plus className="w-2 h-2" />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Overused Keywords */}
+                      {atsSkillGapResult.overusedKeywords.length > 0 && (
+                        <div className="space-y-1.5">
+                          <span className="text-[8px] uppercase font-black text-amber-400 tracking-wider flex items-center gap-1">
+                            <AlertCircle className="w-2.5 h-2.5" /> Overused Keywords
+                          </span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {atsSkillGapResult.overusedKeywords.map((kw, i) => (
+                              <span
+                                key={i}
+                                title={kw.suggestion}
+                                className="text-[8px] px-2 py-0.5 rounded-full border border-amber-500/20 bg-amber-500/8 text-amber-400 font-semibold cursor-help"
+                              >
+                                {kw.keyword}{kw.frequency ? ` ×${kw.frequency}` : ''}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Weak Areas */}
+                  {atsSkillGapResult.weakAreas.length > 0 && (
+                    <div className="p-4 bg-slate-900/20 border border-slate-900 rounded-2xl space-y-3">
+                      <h5 className="text-[9px] uppercase font-black tracking-widest text-slate-400 flex items-center gap-1.5">
+                        <AlertCircle className="w-3 h-3 text-rose-400" /> Weak Areas
+                      </h5>
+                      <div className="space-y-2">
+                        {atsSkillGapResult.weakAreas.map((area, i) => (
+                          <div key={i} className="p-3 bg-slate-950/40 border border-slate-800/60 rounded-xl space-y-1.5">
+                            <p className="text-[10px] font-bold text-slate-200">{area.area}</p>
+                            <p className="text-[9px] text-slate-400 font-light leading-relaxed">{area.reason}</p>
+                            <div className="flex items-start gap-1.5 pt-0.5">
+                              <span className="text-emerald-400 text-[9px] font-black flex-shrink-0 mt-0.5">→</span>
+                              <p className="text-[9px] text-emerald-400 leading-relaxed font-light">{area.actionItem}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action Items */}
+                  {atsSkillGapResult.actionItems.length > 0 && (
+                    <div className="p-4 bg-gradient-to-br from-indigo-950/20 to-slate-900/20 border border-slate-900 rounded-2xl space-y-3">
+                      <h5 className="text-[9px] uppercase font-black tracking-widest text-indigo-400 flex items-center gap-1.5">
+                        <Sparkles className="w-3 h-3" /> Recommended Action Items
+                      </h5>
+                      <ol className="space-y-2" aria-label="Recommended action items">
+                        {atsSkillGapResult.actionItems.map((item, i) => (
+                          <li key={i} className="flex items-start gap-2.5">
+                            <span className="w-5 h-5 flex-shrink-0 bg-indigo-500/15 border border-indigo-500/25 rounded-full text-[8px] font-black text-indigo-400 flex items-center justify-center">
+                              {i + 1}
+                            </span>
+                            <p className="text-[9.5px] text-slate-300 leading-relaxed font-light pt-0.5">{item}</p>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+                  )}
+
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* ====================================================================
            TAB: TAILOR
@@ -2746,6 +3848,494 @@ export function AIPanel({ onSaveTailoredVersion }: AIPanelProps = {}) {
               </>
             )}
 
+          </div>
+        )}
+
+        {/* ====================================================================
+           TAB: PREMIUM EXPERIENCE BULLET REWRITER
+           ==================================================================== */}
+        {activeTab === 'rewriter' && (
+          <div className="space-y-6 animate-fade-in duration-200">
+            {workExperience.length === 0 ? (
+              <div className="bg-slate-950/40 border border-dashed border-slate-800/80 rounded-2xl p-8 text-center flex flex-col items-center gap-3 relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-300 animate-fade-in">
+                <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 group-hover:scale-105 group-hover:bg-indigo-500/20 transition-all duration-300 mb-1">
+                  <Briefcase className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div className="space-y-1 relative z-10">
+                  <h4 className="text-sm font-bold text-slate-200">No Experiences Found</h4>
+                  <p className="text-xxs text-slate-400 max-w-sm leading-relaxed font-light">
+                    Add experience entries to unlock AI bullet improvements.
+                  </p>
+                </div>
+              </div>
+            ) : (() => {
+              const exp = workExperience[selectedRewriteExpIdx];
+              const bullets = exp ? extractBullets(exp.description || '') : [];
+              const hasBullets = bullets.length > 0;
+              const selectedBulletText = hasBullets ? bullets[selectedRewriteBulletIdx] || '' : '';
+
+              return (
+                <div className="space-y-6">
+                  {/* Selector Header Panel */}
+                  <div className="space-y-4 p-4 bg-slate-900/20 border border-slate-900 rounded-2xl">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                      Premium Bullet Rewriter
+                    </h4>
+                    <p className="text-[10px] text-slate-400 leading-relaxed font-light font-sans">
+                      Select an experience item and choose the bullet point you wish to optimize with professional resume criteria.
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      {/* Experience Item Select */}
+                      <div className="space-y-1">
+                        <label htmlFor="exp-select" className="text-[9px] uppercase font-black tracking-widest text-slate-500 block">Experience Item</label>
+                        <select
+                          id="exp-select"
+                          aria-label="Select Work Experience Item"
+                          value={selectedRewriteExpIdx}
+                          onChange={(e) => {
+                            setSelectedRewriteExpIdx(parseInt(e.target.value));
+                            setSelectedRewriteBulletIdx(0);
+                            setRewriteSuggestions(null);
+                            setRewriteHistory([]);
+                            setRewriteHistoryIdx(-1);
+                            setBulletUndoStack([]);
+                          }}
+                          disabled={isRewriteLoading}
+                          className="w-full bg-slate-955 border border-slate-800 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50 focus-visible:outline-none rounded-xl px-3 py-2 text-xs text-white disabled:opacity-50"
+                        >
+                          {workExperience.map((item: any, idx: number) => (
+                            <option key={idx} value={idx}>
+                              {item.company ? `${item.position || 'Role'} at ${item.company}` : `Experience #${idx + 1}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Bullet Index Select */}
+                      <div className="space-y-1">
+                        <label htmlFor="bullet-select" className="text-[9px] uppercase font-black tracking-widest text-slate-500 block">Bullet Point</label>
+                        <select
+                          id="bullet-select"
+                          aria-label="Select Bullet Point Index"
+                          value={selectedRewriteBulletIdx}
+                          onChange={(e) => {
+                            setSelectedRewriteBulletIdx(parseInt(e.target.value));
+                            setRewriteSuggestions(null);
+                            setRewriteHistory([]);
+                            setRewriteHistoryIdx(-1);
+                            setBulletUndoStack([]);
+                          }}
+                          disabled={isRewriteLoading || !hasBullets}
+                          className="w-full bg-slate-955 border border-slate-800 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/50 focus-visible:outline-none rounded-xl px-3 py-2 text-xs text-white disabled:opacity-50"
+                        >
+                          {hasBullets ? (
+                            bullets.map((bullet, idx) => (
+                              <option key={idx} value={idx}>
+                                Bullet #{idx + 1}: {bullet.replace(/<[^>]*>/g, '').substring(0, 25)}...
+                              </option>
+                            ))
+                          ) : (
+                            <option value={0}>No bullets available</option>
+                          )}
+                        </select>
+                      </div>
+                    </div>
+
+                    {!hasBullets ? (
+                      <div className="bg-slate-950/45 border border-dashed border-slate-850 p-6 rounded-xl text-center space-y-2">
+                        <p className="text-[10px] text-amber-500 font-light italic">
+                          No bullet points found. Add bullet points to start improving them with AI.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 pt-1 border-t border-slate-900/40">
+                        {/* Original Bullet Preview */}
+                        <div className="p-3.5 bg-slate-950/80 border border-slate-900 rounded-xl space-y-1">
+                          <span className="text-[8px] font-black text-slate-500 uppercase tracking-wide block">Original Text:</span>
+                          <p className="text-[10.5px] text-slate-355 leading-relaxed font-light italic">
+                            &quot;{selectedBulletText}&quot;
+                          </p>
+                        </div>
+
+                        {/* Action buttons - Hidden on mobile, shown on desktop */}
+                        <div className="hidden md:flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleRewriteBullet(false)}
+                            disabled={isRewriteLoading}
+                            aria-label="Improve Bullet with AI"
+                            aria-busy={isRewriteLoading}
+                            className="flex-grow flex items-center justify-center gap-1.5 px-4 py-2.5 text-xs font-bold text-white bg-indigo-650 hover:bg-indigo-600 rounded-xl disabled:opacity-50 transition-all cursor-pointer shadow-lg shadow-indigo-600/10 focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                          >
+                            {isRewriteLoading ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                Generating AI Suggestions...
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles className="w-3.5 h-3.5" />
+                                Improve Bullet
+                              </>
+                            )}
+                          </button>
+
+                          {bulletUndoStack.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleUndoRewrite}
+                              disabled={isRewriteLoading}
+                              aria-label="Undo last applied bullet change"
+                              className="px-4 py-2.5 text-xs font-bold text-slate-300 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-xl disabled:opacity-40 transition-all cursor-pointer flex items-center gap-1.5 shrink-0 focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                            >
+                              <Undo className="w-3.5 h-3.5 text-slate-400" />
+                              Undo Changes ({bulletUndoStack.length})
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Errors Block */}
+                  {rewriteError && (
+                    <div className="p-3 bg-rose-500/10 border border-rose-500/20 text-rose-450 rounded-xl text-xs flex items-center gap-2 animate-fade-in">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      <span>{rewriteError}</span>
+                    </div>
+                  )}
+
+                  {/* SKELETON LOADERS - Shimmer animation to prevent layout shifts */}
+                  {isRewriteLoading && (
+                    <div className="space-y-4" aria-busy="true" aria-live="polite">
+                      <span className="sr-only">Generating AI suggestions, please wait...</span>
+                      {/* Score Board skeleton */}
+                      <div className="h-16 w-full rounded-2xl shimmer-effect opacity-60" />
+                      
+                      {/* Suggestions list header skeleton */}
+                      <div className="flex justify-between items-center px-1">
+                        <div className="h-4 w-32 rounded shimmer-effect opacity-65" />
+                        <div className="h-4 w-20 rounded shimmer-effect opacity-65" />
+                      </div>
+
+                      {/* 4 Cards skeleton */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {[1, 2, 3, 4].map(idx => (
+                          <div key={idx} className="bg-slate-900/10 border border-slate-900/80 rounded-2xl p-4.5 space-y-4 h-56 flex flex-col justify-between">
+                            <div className="flex justify-between items-center">
+                              <div className="h-4 w-24 rounded shimmer-effect opacity-70" />
+                              <div className="h-4 w-12 rounded shimmer-effect opacity-70" />
+                            </div>
+                            <div className="h-20 w-full rounded-xl shimmer-effect opacity-50" />
+                            <div className="h-3 w-full rounded shimmer-effect opacity-70" />
+                            <div className="flex gap-2">
+                              <div className="h-9 flex-grow rounded-lg shimmer-effect opacity-60" />
+                              <div className="h-9 flex-grow rounded-lg shimmer-effect opacity-60" />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* REWRITE SUGGESTIONS UI */}
+                  {!isRewriteLoading && rewriteSuggestions && (
+                    <div className="space-y-5 animate-fade-in">
+                      
+                      {/* Score board / Strength Visualization */}
+                      {(() => {
+                        const suggestions = [
+                          { key: 'actionOriented', data: rewriteSuggestions.actionOriented },
+                          { key: 'quantified', data: rewriteSuggestions.quantified },
+                          { key: 'concise', data: rewriteSuggestions.concise },
+                          { key: 'atsOptimized', data: rewriteSuggestions.atsOptimized }
+                        ];
+                        // Get highest score from suggestions, safely clamped
+                        const maxScore = Math.max(...suggestions.map(s => clampScore(s.data.score)));
+                        const clampedOriginal = clampScore(rewriteSuggestions.originalScore);
+                        const scoreDiff = Math.max(0, maxScore - clampedOriginal);
+
+                        return (
+                          <div className="p-4 bg-slate-900/30 border border-slate-900 rounded-2xl flex items-center justify-between gap-4 relative overflow-hidden group">
+                            <div className="absolute top-[-50px] right-[-50px] w-28 h-28 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+                            
+                            <div className="flex items-center gap-4 flex-grow">
+                              <div className="flex gap-1.5 items-center shrink-0">
+                                <div className="text-center">
+                                  <span className="text-[8px] font-bold text-slate-500 uppercase block leading-none">ORIGINAL</span>
+                                  <span className="text-base font-black text-slate-400 font-mono mt-1 block">{clampedOriginal}</span>
+                                </div>
+                                <div className="text-slate-650 font-black text-xs">→</div>
+                                <div className="text-center bg-indigo-650/15 border border-indigo-500/25 px-2.5 py-1 rounded-xl">
+                                  <span className="text-[8px] font-bold text-indigo-400 uppercase block leading-none">IMPROVED</span>
+                                  <span className="text-lg font-black text-indigo-300 font-mono mt-0.5 block">{maxScore}</span>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1 flex-grow">
+                                <div className="flex justify-between items-center text-[9px] font-bold text-slate-400">
+                                  <span>BULLET STRENGTH SCALE</span>
+                                  <span className="text-emerald-450 font-extrabold">+{scoreDiff} Increase</span>
+                                </div>
+                                <div className="h-1.5 bg-slate-950 rounded-full overflow-hidden flex">
+                                  <div 
+                                    className="h-full bg-slate-800 transition-all duration-500" 
+                                    style={{ width: `${clampedOriginal}%` }} 
+                                  />
+                                  <div 
+                                    className="h-full bg-gradient-to-r from-indigo-500 to-emerald-450 transition-all duration-500" 
+                                    style={{ width: `${scoreDiff}%` }} 
+                                  />
+                                </div>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={handleApplyBestSuggestion}
+                              aria-label="Apply best scored bullet suggestion"
+                              className="px-3.5 py-2.5 text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-555 rounded-xl transition-all cursor-pointer shadow-md shadow-emerald-600/10 shrink-0 uppercase tracking-wide select-none focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                            >
+                              Apply Best Suggestion
+                            </button>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Header controls for Suggestions & History */}
+                      <div className="flex justify-between items-center px-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[9.5px] uppercase font-black tracking-widest text-indigo-400">AI Variations (4)</span>
+                          
+                          {/* History navigators */}
+                          {rewriteHistory.length > 1 && (
+                            <div className="flex items-center gap-1.5 border border-slate-900 bg-slate-950/60 rounded-lg px-2 py-0.5 text-[8.5px]">
+                              <button
+                                type="button"
+                                onClick={() => handleNavigateHistory('back')}
+                                disabled={rewriteHistoryIdx <= 0}
+                                aria-label="Previous Generation"
+                                title="Previous Generation"
+                                className="text-slate-500 hover:text-white disabled:opacity-30 cursor-pointer focus:ring-1 focus:ring-indigo-500 focus-visible:outline-none rounded"
+                              >
+                                ◀
+                              </button>
+                              <span className="font-mono text-slate-400 font-bold select-none">{rewriteHistoryIdx + 1}/{rewriteHistory.length}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleNavigateHistory('forward')}
+                                disabled={rewriteHistoryIdx >= rewriteHistory.length - 1}
+                                aria-label="Next Generation"
+                                title="Next Generation"
+                                className="text-slate-500 hover:text-white disabled:opacity-30 cursor-pointer focus:ring-1 focus:ring-indigo-500 focus-visible:outline-none rounded"
+                              >
+                                ▶
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={handleRegenerateSuggestions}
+                          aria-label="Regenerate suggestions"
+                          className="flex items-center gap-1 text-[9px] font-bold text-indigo-400 hover:text-indigo-300 transition-colors uppercase tracking-widest cursor-pointer focus:ring-1 focus:ring-indigo-500 focus-visible:outline-none rounded"
+                        >
+                          <RefreshCw className="w-3.5 h-3.5 text-indigo-400" />
+                          Regenerate Suggestions
+                        </button>
+                      </div>
+
+                      {/* 4 Cards Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {[
+                          {
+                            key: 'actionOriented',
+                            label: 'Action Impact',
+                            icon: '🚀',
+                            data: rewriteSuggestions.actionOriented,
+                            gradient: 'from-indigo-500/10 to-indigo-500/5',
+                            borderGlow: 'hover:border-indigo-500/35 hover:shadow-indigo-500/5'
+                          },
+                          {
+                            key: 'quantified',
+                            label: 'Quantified Impact',
+                            icon: '📊',
+                            data: rewriteSuggestions.quantified,
+                            gradient: 'from-purple-500/10 to-purple-500/5',
+                            borderGlow: 'hover:border-purple-500/35 hover:shadow-purple-500/5'
+                          },
+                          {
+                            key: 'concise',
+                            label: 'Clear & Concise',
+                            icon: '✨',
+                            data: rewriteSuggestions.concise,
+                            gradient: 'from-amber-500/10 to-amber-500/5',
+                            borderGlow: 'hover:border-amber-500/35 hover:shadow-amber-500/5'
+                          },
+                          {
+                            key: 'atsOptimized',
+                            label: 'ATS Optimized',
+                            icon: '🎯',
+                            data: rewriteSuggestions.atsOptimized,
+                            gradient: 'from-emerald-500/10 to-emerald-500/5',
+                            borderGlow: 'hover:border-emerald-500/35 hover:shadow-emerald-500/5'
+                          }
+                        ].map((cardInfo) => {
+                          const val = editedSuggestions[cardInfo.key as keyof typeof editedSuggestions] || cardInfo.data.text;
+                          const wordCountNum = val.split(/\s+/).filter(Boolean).length;
+                          const atsStrength = cardInfo.data.score;
+
+                          // Confidence badge colors
+                          const confidenceColor = 
+                            cardInfo.data.confidence === 'high' ? 'bg-emerald-500/15 border-emerald-500/25 text-emerald-400' :
+                            cardInfo.data.confidence === 'medium' ? 'bg-amber-500/15 border-amber-500/25 text-amber-400' :
+                            'bg-slate-500/15 border-slate-500/25 text-slate-400';
+
+                          return (
+                            <div 
+                              key={cardInfo.key} 
+                              className={`bg-slate-950 border border-slate-900 rounded-2xl p-4.5 flex flex-col justify-between gap-3 bg-gradient-to-b ${cardInfo.gradient} ${cardInfo.borderGlow} transition-all duration-300 shadow-md group`}
+                            >
+                              <div className="flex justify-between items-center">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-xs">{cardInfo.icon}</span>
+                                  <span className="text-[10px] font-bold text-slate-200 uppercase tracking-wide">{cardInfo.label}</span>
+                                </div>
+                                
+                                <div className="flex gap-1.5 shrink-0">
+                                  <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded border ${confidenceColor}`}>
+                                    {cardInfo.data.confidence} Match
+                                  </span>
+                                  <span className="text-[8px] font-black uppercase px-2 py-0.5 rounded border border-indigo-500/25 bg-indigo-500/10 text-indigo-400 font-mono">
+                                    Score: {clampScore(cardInfo.data.score)}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Editable suggestion text area */}
+                              <textarea
+                                value={val}
+                                onChange={(e) => {
+                                  setEditedSuggestions(prev => ({
+                                    ...prev,
+                                    [cardInfo.key]: e.target.value
+                                  }));
+                                }}
+                                aria-label={`AI improved variation: ${cardInfo.label}`}
+                                rows={3}
+                                className="w-full max-h-32 bg-slate-955 border border-slate-850 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/40 rounded-xl p-3 text-[10px] text-slate-200 leading-relaxed font-light focus:outline-none resize-none shadow-inner overflow-y-auto"
+                              />
+
+                              {/* Explanatory text */}
+                              <div className="text-[9px] text-slate-450 leading-relaxed font-light select-none italic font-sans flex items-start gap-1">
+                                <span className="text-indigo-400 font-bold shrink-0">AI Tip:</span>
+                                <span>{cardInfo.data.explanation}</span>
+                              </div>
+
+                              {/* Bottom card indicators and buttons */}
+                              <div className="flex items-center justify-between border-t border-slate-900/60 pt-2 text-[9px] text-slate-500 select-none">
+                                <div className="flex gap-2">
+                                  <span>{wordCountNum} words</span>
+                                  <span>•</span>
+                                  <span className={clampScore(atsStrength) >= 85 ? 'text-emerald-450 font-semibold' : 'text-amber-500'}>
+                                    {clampScore(atsStrength) >= 85 ? 'Strong ATS' : 'Standard ATS'}
+                                  </span>
+                                </div>
+
+                                <div className="flex gap-1.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(val);
+                                      toast.success('Suggestion copied successfully.');
+                                      console.log('bullet_rewrite_copied', { type: cardInfo.key });
+                                    }}
+                                    disabled={isRewriteLoading}
+                                    aria-label={`Copy ${cardInfo.label} suggestion text`}
+                                    className="p-2 bg-slate-900 border border-slate-855 hover:bg-slate-800 disabled:opacity-40 rounded-lg text-slate-400 hover:text-white transition-colors cursor-pointer focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                                    title="Copy text"
+                                  >
+                                    <Copy className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAcceptRewriteBullet(val)}
+                                    disabled={isRewriteLoading}
+                                    aria-label={`Accept and apply ${cardInfo.label} suggestion`}
+                                    className="flex items-center justify-center gap-1.5 h-8 px-3 text-[9px] font-bold text-white bg-indigo-600 hover:bg-indigo-550 disabled:opacity-40 rounded-lg transition-colors cursor-pointer select-none focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                                  >
+                                    <Check className="w-3 h-3 text-white" />
+                                    Accept
+                                  </button>
+                                </div>
+                              </div>
+
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                    </div>
+                  )}
+
+                  {/* Sticky Bottom Actions for Mobile Screens */}
+                  {hasBullets && (
+                    <div className="md:hidden sticky bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur-md border-t border-slate-900/80 p-3.5 flex gap-2 z-50 -mx-4 -mb-4 shadow-lg shadow-black/40">
+                      {isRewriteLoading ? (
+                        <button
+                          type="button"
+                          disabled
+                          className="w-full flex items-center justify-center gap-2 h-11 text-xs font-bold text-white bg-slate-900 border border-slate-800 rounded-xl"
+                        >
+                          <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+                          <span>Generating AI suggestions...</span>
+                        </button>
+                      ) : (
+                        <>
+                          {rewriteSuggestions ? (
+                            <button
+                              type="button"
+                              onClick={handleApplyBestSuggestion}
+                              className="flex-grow flex items-center justify-center gap-1.5 h-11 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl shadow-md focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                              aria-label="Apply Best Suggestion (Mobile)"
+                            >
+                              <Sparkles className="w-4 h-4" />
+                              Apply Best Suggestion
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleRewriteBullet(false)}
+                              className="flex-grow flex items-center justify-center gap-1.5 h-11 text-xs font-bold text-white bg-indigo-650 hover:bg-indigo-600 rounded-xl shadow-lg focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                              aria-label="Improve Bullet (Mobile)"
+                            >
+                              <Sparkles className="w-4 h-4" />
+                              Improve Bullet
+                            </button>
+                          )}
+                          
+                          {bulletUndoStack.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={handleUndoRewrite}
+                              className="px-4 h-11 text-xs font-bold text-slate-300 bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-xl flex items-center gap-1.5 shrink-0 focus:ring-2 focus:ring-indigo-500 focus-visible:outline-none"
+                              aria-label="Undo last applied bullet change (Mobile)"
+                            >
+                              <Undo className="w-4 h-4 text-slate-400" />
+                              Undo ({bulletUndoStack.length})
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 

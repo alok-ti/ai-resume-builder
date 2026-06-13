@@ -144,6 +144,37 @@ export function InlineAiButton({ fieldName, currentValue, tone = 'improve', labe
   );
 }
 
+interface EmptyStateCardProps {
+  title: string;
+  description: string;
+  icon: React.ReactNode;
+  actionLabel: string;
+  onAction: () => void;
+}
+
+export function EmptyStateCard({ title, description, icon, actionLabel, onAction }: EmptyStateCardProps) {
+  return (
+    <div className="bg-slate-950/40 border border-dashed border-slate-800/80 rounded-2xl p-8 text-center flex flex-col items-center gap-3 relative overflow-hidden group hover:border-indigo-500/30 transition-all duration-300 animate-fade-in">
+      <div className="absolute inset-0 bg-gradient-to-b from-indigo-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+      <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 group-hover:scale-105 group-hover:bg-indigo-500/20 transition-all duration-300 mb-1">
+        {icon}
+      </div>
+      <div className="space-y-1 relative z-10">
+        <h4 className="text-sm font-bold text-slate-200">{title}</h4>
+        <p className="text-xxs text-slate-400 max-w-sm leading-relaxed font-light">{description}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onAction}
+        className="mt-2 flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600/85 hover:bg-indigo-650 rounded-xl transition-all shadow-md shadow-indigo-600/10 hover:shadow-indigo-600/20 cursor-pointer"
+      >
+        <Plus className="w-3.5 h-3.5" />
+        {actionLabel}
+      </button>
+    </div>
+  );
+}
+
 
 /* ==========================================================================
    1. PERSONAL INFORMATION FORM
@@ -376,7 +407,13 @@ export function ExperienceForm() {
       </div>
 
       {fields.length === 0 ? (
-        <p className="text-xs text-slate-500 italic text-center py-8">No experience items added yet.</p>
+        <EmptyStateCard
+          title="No experience added yet"
+          description="Detail your career milestones and achievements. Focus on action verbs and measurable business outcomes."
+          icon={<Briefcase className="w-5 h-5 text-indigo-400" />}
+          actionLabel="Add Experience"
+          onAction={handleAppend}
+        />
       ) : (
         <DndContext 
           sensors={sensors} 
@@ -594,7 +631,13 @@ export function EducationForm() {
       </div>
 
       {fields.length === 0 ? (
-        <p className="text-xs text-slate-500 italic text-center py-8">No education items added yet.</p>
+        <EmptyStateCard
+          title="No education added yet"
+          description="Add details about your university degree, high school, or certification program. A solid academic foundation is essential for ATS compatibility."
+          icon={<GraduationCap className="w-5 h-5 text-indigo-400" />}
+          actionLabel="Add School"
+          onAction={handleAppend}
+        />
       ) : (
         <DndContext 
           sensors={sensors} 
@@ -789,7 +832,13 @@ export function ProjectsForm() {
       </div>
 
       {fields.length === 0 ? (
-        <p className="text-xs text-slate-500 italic text-center py-8">No projects items added yet.</p>
+        <EmptyStateCard
+          title="No projects added yet"
+          description="Showcase side projects, open-source work, or academic achievements. Highlighting technical projects demonstrates your practical skill set."
+          icon={<FolderGit2 className="w-5 h-5 text-indigo-400" />}
+          actionLabel="Add Project"
+          onAction={handleAppend}
+        />
       ) : (
         <DndContext 
           sensors={sensors} 
@@ -1046,7 +1095,13 @@ export function CertificatesForm() {
       </div>
 
       {fields.length === 0 ? (
-        <p className="text-xs text-slate-500 italic text-center py-8">No certifications added yet.</p>
+        <EmptyStateCard
+          title="No certifications added yet"
+          description="Display professional certifications and training programs to validate your skills and expertise to potential employers."
+          icon={<Award className="w-5 h-5 text-indigo-400" />}
+          actionLabel="Add Certification"
+          onAction={handleAppend}
+        />
       ) : (
         <DndContext 
           sensors={sensors} 
@@ -1218,7 +1273,13 @@ export function AchievementsForm() {
       </div>
 
       {fields.length === 0 ? (
-        <p className="text-xs text-slate-500 italic text-center py-8">No achievements added yet.</p>
+        <EmptyStateCard
+          title="No achievements added yet"
+          description="Add awards, hackathon wins, or professional recognition. Highlighting achievements shows initiative and drive."
+          icon={<Trophy className="w-5 h-5 text-indigo-400" />}
+          actionLabel="Add Achievement"
+          onAction={handleAppend}
+        />
       ) : (
         <DndContext 
           sensors={sensors} 

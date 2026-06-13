@@ -65,6 +65,157 @@ export async function rewriteExperience(text: string, position: string, company:
   return JSON.parse(cleanJson);
 }
 
+export interface BulletSuggestion {
+  text: string;
+  explanation: string;
+  confidence: 'high' | 'medium' | 'low';
+  score: number;
+}
+
+export interface BulletRewriteResponse {
+  originalScore: number;
+  actionOriented: BulletSuggestion;
+  quantified: BulletSuggestion;
+  concise: BulletSuggestion;
+  atsOptimized: BulletSuggestion;
+}
+
+/**
+ * Premium Experience Bullet Point Rewriter
+ */
+export async function rewriteExperienceBullet(
+  bullet: string,
+  position: string,
+  company: string
+): Promise<BulletRewriteResponse> {
+  if (!apiKey) {
+    console.warn("GEMINI_API_KEY is not configured. Running in Mock Mode for bullet point rewriter.");
+    const cleanBullet = bullet.replace(/^[•\-\s]+/, '').trim() || 'managed team coordination and communication across departments';
+    
+    return {
+      originalScore: 62,
+      actionOriented: {
+        text: `Spearheaded cross-functional communication and department alignment, establishing unified project tracking standards.`,
+        explanation: `Replaces passive coordination phrasing with active ownership ("Spearheaded") and structured outcomes.`,
+        confidence: 'high',
+        score: 85
+      },
+      quantified: {
+        text: `Coordinated weekly cross-functional meetings for 15+ team members across 3 departments, boosting project delivery rate by 20%.`,
+        explanation: `Quantifies the scale (15+ members, 3 departments) and business impact (20% delivery rate) of department coordination.`,
+        confidence: 'medium',
+        score: 90
+      },
+      concise: {
+        text: `Facilitated cross-functional collaboration and department communication to streamline project execution.`,
+        explanation: `Improves clarity and readability by removing wordy phrasing and focusing on the core activity.`,
+        confidence: 'high',
+        score: 80
+      },
+      atsOptimized: {
+        text: `Managed cross-functional coordination, agile communication, and stakeholder collaboration across engineering departments.`,
+        explanation: `Integrates targeted keywords like "agile communication", "stakeholder collaboration", and "cross-functional coordination" to match parser standards.`,
+        confidence: 'high',
+        score: 88
+      }
+    };
+  }
+
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  const prompt = `
+    You are an expert resume writer and ATS (Applicant Tracking System) optimization specialist.
+    Optimize the following experience bullet point from a professional's work experience section into four distinct variations, and assess why each suggestion is stronger.
+    
+    Current Bullet: "${bullet}"
+    Job Title/Position: ${position}
+    Company: ${company}
+    
+    GENERATE THESE FOUR VARIATIONS:
+    1. actionOriented: Focuses on ownership, initiative, and responsibility. Starts with a strong, active verb.
+    2. quantified: Includes measurable scale, outcomes, or metrics (e.g. percentages, counts, time, or currency). If exact numbers aren't in the original bullet, suggest a realistic, logically framed placeholder metric representing standard performance outcomes. Do not manufacture completely arbitrary claims.
+    3. concise: Improves readability by keeping the wording direct, eliminating fluff/redundancies, and making the achievement crystal clear.
+    4. atsOptimized: Emphasizes relevant industry keywords, technical terminology, and action descriptors to score higher in semantic parsing systems.
+    
+    IMPORTANT CONSTRAINTS:
+    - Preserve the factual meaning of the original bullet.
+    - Never fabricate untrue metrics or achievements.
+    - Rate the confidence level ('high', 'medium', or 'low') of each suggestion's applicability.
+    - Provide a score (0-100) for the original bullet, and a score (0-100) for each suggestion representing its strength.
+    - Provide a short explanation (one sentence) of why each suggestion is stronger.
+    
+    Format your response as a valid, raw JSON object matching the following structure:
+    {
+      "originalScore": 62,
+      "actionOriented": {
+        "text": "...",
+        "explanation": "...",
+        "confidence": "high",
+        "score": 85
+      },
+      "quantified": {
+        "text": "...",
+        "explanation": "...",
+        "confidence": "medium",
+        "score": 90
+      },
+      "concise": {
+        "text": "...",
+        "explanation": "...",
+        "confidence": "high",
+        "score": 80
+      },
+      "atsOptimized": {
+        "text": "...",
+        "explanation": "...",
+        "confidence": "high",
+        "score": 88
+      }
+    }
+    
+    Return ONLY the raw JSON object. Do not wrap in markdown code block tags. Ensure all quotes inside the JSON keys and values are properly escaped.
+  `;
+
+  const result = await model.generateContent(prompt);
+  const outputText = result.response.text().trim();
+  const cleanJson = outputText.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+  
+  try {
+    return JSON.parse(cleanJson) as BulletRewriteResponse;
+  } catch (err) {
+    console.error('Failed to parse Gemini output as JSON:', err, outputText);
+    
+    // Fallback JSON in case of parse errors
+    const fallbackText = bullet.replace(/^[•\-\s]+/, '').trim() || 'worked on experience detail';
+    return {
+      originalScore: 50,
+      actionOriented: {
+        text: `Spearheaded execution of: ${fallbackText}.`,
+        explanation: `Uses a strong active verb to establish ownership.`,
+        confidence: 'high',
+        score: 75
+      },
+      quantified: {
+        text: `Executed ${fallbackText}, improving team deliverable efficiency by 15%.`,
+        explanation: `Includes a standard estimated performance impact metric.`,
+        confidence: 'medium',
+        score: 80
+      },
+      concise: {
+        text: `${fallbackText}.`,
+        explanation: `Simplifies phrasing for immediate clarity.`,
+        confidence: 'high',
+        score: 70
+      },
+      atsOptimized: {
+        text: `Managed deliverables and workflow execution for: ${fallbackText}.`,
+        explanation: `Integrates standard operational parser keywords.`,
+        confidence: 'high',
+        score: 78
+      }
+    };
+  }
+}
+
 /**
  * Skills Suggestions
  */
@@ -1814,4 +1965,320 @@ export async function generateCareerAssistantContent(
   }
 }
 
+// ============================================================================
+// ATS SKILL GAP ANALYZER
+// ============================================================================
+
+export interface SkillGapPlacement {
+  section: 'skills' | 'experience' | 'summary' | 'projects' | 'certifications';
+  reason: string;
+  example?: string;
+}
+
+export interface SkillGapRecommendation {
+  skill: string;
+  priority: 'critical' | 'important' | 'nice-to-have';
+  category: 'technical' | 'soft' | 'domain' | 'tool';
+  placement: SkillGapPlacement[];
+  confidence: number; // 0-100
+}
+
+export interface KeywordInsight {
+  keyword: string;
+  status: 'present' | 'missing' | 'overused';
+  frequency?: number;
+  suggestion?: string;
+}
+
+export interface SkillGapWeakArea {
+  area: string;
+  reason: string;
+  actionItem: string;
+}
+
+export interface SkillGapResult {
+  keywordMatchPercentage: number;
+  confidenceScore: number;
+  summary: string;
+  criticalMissing: SkillGapRecommendation[];
+  importantMissing: SkillGapRecommendation[];
+  niceToHave: SkillGapRecommendation[];
+  strongKeywords: KeywordInsight[];
+  missingKeywords: KeywordInsight[];
+  overusedKeywords: KeywordInsight[];
+  weakAreas: SkillGapWeakArea[];
+  actionItems: string[];
+}
+
+/**
+ * ATS Skill Gap Analyzer
+ * Compares resume against a job description and returns prioritized skill gaps,
+ * keyword insights, smart placement recommendations, and action items.
+ */
+export async function analyzeSkillGap(
+  resumeData: any,
+  jobDescription: string
+): Promise<SkillGapResult> {
+  if (!apiKey) {
+    console.warn('GEMINI_API_KEY is not configured. Running in Mock Mode for skill gap analysis.');
+
+    const techSkills = resumeData?.skills?.technicalSkills || [];
+    const softSkills = resumeData?.skills?.softSkills || [];
+
+    return {
+      keywordMatchPercentage: 58,
+      confidenceScore: 82,
+      summary: 'Your resume covers the foundational technical stack but is missing several critical cloud and DevOps keywords that are prominent in this job description. Addressing the critical gaps will significantly improve your ATS pass rate.',
+      criticalMissing: [
+        {
+          skill: 'Kubernetes',
+          priority: 'critical',
+          category: 'tool',
+          confidence: 92,
+          placement: [
+            { section: 'skills', reason: 'Kubernetes appears 4 times in the JD. Adding it to your skills section ensures ATS keyword matching.', example: 'Kubernetes (container orchestration)' },
+            { section: 'experience', reason: 'Reference Kubernetes in a deployment or infrastructure bullet to demonstrate hands-on usage.', example: 'Deployed microservices to Kubernetes clusters, reducing deployment time by 40%.' }
+          ]
+        },
+        {
+          skill: 'CI/CD Pipelines',
+          priority: 'critical',
+          category: 'technical',
+          confidence: 88,
+          placement: [
+            { section: 'skills', reason: 'The JD explicitly lists CI/CD as a required skill. Including it improves keyword density.', example: 'CI/CD (GitHub Actions, Jenkins)' },
+            { section: 'experience', reason: 'Mention the CI/CD tools you used in a past role to substantiate the claim.', example: 'Built CI/CD pipeline using GitHub Actions, enabling automated testing and zero-downtime deployments.' }
+          ]
+        },
+        {
+          skill: 'AWS',
+          priority: 'critical',
+          category: 'tool',
+          confidence: 90,
+          placement: [
+            { section: 'skills', reason: 'AWS is a required qualification in the JD. Missing it could auto-reject your application.', example: 'AWS (EC2, S3, Lambda, RDS)' },
+            { section: 'summary', reason: 'Mentioning AWS in your summary immediately signals cloud competency to recruiters.', example: 'Cloud-native engineer with AWS expertise...' }
+          ]
+        }
+      ],
+      importantMissing: [
+        {
+          skill: 'System Design',
+          priority: 'important',
+          category: 'technical',
+          confidence: 78,
+          placement: [
+            { section: 'summary', reason: 'System design skills signal senior-level thinking. Include it in your professional summary.', example: 'Experienced in distributed system design and scalable architecture.' },
+            { section: 'experience', reason: 'Call out any architectural decisions you made in past roles.', example: 'Designed event-driven microservices architecture handling 1M+ daily requests.' }
+          ]
+        },
+        {
+          skill: 'Agile / Scrum',
+          priority: 'important',
+          category: 'soft',
+          confidence: 72,
+          placement: [
+            { section: 'skills', reason: 'Agile methodology is expected for most senior engineering roles. Add to soft skills.', example: 'Agile / Scrum Methodology' },
+            { section: 'experience', reason: 'Reference sprint ceremonies or cross-functional collaboration to show Agile experience.', example: 'Collaborated in 2-week Agile sprints with product managers and designers to deliver features.' }
+          ]
+        },
+        {
+          skill: 'GraphQL',
+          priority: 'important',
+          category: 'technical',
+          confidence: 65,
+          placement: [
+            { section: 'skills', reason: 'GraphQL is listed as a preferred skill in the JD. Including it differentiates your resume.', example: 'GraphQL (Apollo Server, REST APIs)' },
+            { section: 'projects', reason: 'If you have a personal project using GraphQL, reference it to demonstrate initiative.', example: 'Built a GraphQL API for a full-stack app...' }
+          ]
+        }
+      ],
+      niceToHave: [
+        {
+          skill: 'Terraform',
+          priority: 'nice-to-have',
+          category: 'tool',
+          confidence: 55,
+          placement: [
+            { section: 'skills', reason: 'Infrastructure as Code is a growing expectation. Terraform adds a bonus signal.', example: 'Terraform (IaC)' }
+          ]
+        },
+        {
+          skill: 'Redis',
+          priority: 'nice-to-have',
+          category: 'tool',
+          confidence: 50,
+          placement: [
+            { section: 'skills', reason: 'Redis caching experience rounds out backend proficiency.', example: 'Redis (caching, pub/sub)' }
+          ]
+        }
+      ],
+      strongKeywords: [
+        { keyword: 'React', status: 'present', frequency: 3, suggestion: 'Good. React is well-represented in your resume.' },
+        { keyword: 'TypeScript', status: 'present', frequency: 2, suggestion: 'Good. TypeScript is clearly demonstrated.' },
+        { keyword: 'Node.js', status: 'present', frequency: 2, suggestion: 'Present and relevant to the JD.' },
+        { keyword: 'PostgreSQL', status: 'present', frequency: 1, suggestion: 'Mentioned once. Consider referencing in more contexts.' }
+      ],
+      missingKeywords: [
+        { keyword: 'distributed systems', status: 'missing', suggestion: 'Add to summary or experience bullets.' },
+        { keyword: 'observability', status: 'missing', suggestion: 'Mention logging, metrics, or tracing tools used.' },
+        { keyword: 'microservices', status: 'missing', suggestion: 'Reference microservices architecture in experience.' }
+      ],
+      overusedKeywords: [
+        { keyword: 'developed', status: 'overused', frequency: 7, suggestion: 'Vary with: Architected, Engineered, Implemented, Spearheaded.' },
+        { keyword: 'worked', status: 'overused', frequency: 5, suggestion: 'Replace with stronger action verbs to improve ATS impact scores.' }
+      ],
+      weakAreas: [
+        { area: 'Cloud Infrastructure', reason: 'No mention of cloud platforms, services, or deployments.', actionItem: 'Add AWS/GCP/Azure certifications or project experience to the skills and experience sections.' },
+        { area: 'Quantified Impact', reason: 'Less than 30% of bullets include measurable outcomes.', actionItem: 'Revise experience bullets to include % improvements, time reductions, or scale metrics.' },
+        { area: 'DevOps Practices', reason: 'No CI/CD, containerization, or infrastructure-as-code keywords detected.', actionItem: 'Add DevOps tools (Docker, GitHub Actions, Terraform) to skills and reference them in project descriptions.' }
+      ],
+      actionItems: [
+        'Add Kubernetes to your technical skills section and reference it in at least one experience bullet.',
+        'Include AWS (EC2, S3, Lambda) in both your skills and professional summary.',
+        'Quantify 2-3 more experience bullets with specific metrics (e.g., "reduced latency by 35%").',
+        'Replace passive verbs (worked, helped, assisted) with strong action verbs (architected, engineered, led).',
+        'Add a CI/CD pipeline reference to your most recent work experience.',
+        'Consider adding a projects section demonstrating cloud or DevOps skills if not yet present.'
+      ]
+    };
+  }
+
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+  const prompt = `
+You are a senior ATS (Applicant Tracking System) specialist and professional resume strategist.
+
+Analyze the following resume against the provided job description. Identify skill gaps, keyword mismatches, and provide smart, placement-specific recommendations to maximize ATS compatibility and recruiter impact.
+
+RESUME DATA:
+${JSON.stringify(resumeData, null, 2)}
+
+JOB DESCRIPTION:
+"${jobDescription}"
+
+ANALYSIS INSTRUCTIONS:
+1. Compare all resume sections (skills, experience, projects, certifications, summary) against the job description.
+2. Identify skills and keywords that are CRITICAL (blocking ATS pass), IMPORTANT (significantly improves chances), or NICE-TO-HAVE (differentiators).
+3. For each missing skill, recommend the best placement section(s) with a clear reason and an example of how to incorporate it.
+4. Identify strong keywords (already well-covered), missing keywords (not in resume at all), and overused keywords (appear too frequently and may dilute impact).
+5. Identify 2-4 weak areas in the resume relative to this JD.
+6. Generate 5-7 actionable, specific improvement items.
+
+CATEGORY DEFINITIONS:
+- "technical": Programming languages, frameworks, algorithms, data structures
+- "soft": Interpersonal, communication, leadership, process skills
+- "domain": Industry-specific knowledge (fintech, healthcare, e-commerce, etc.)
+- "tool": Dev tools, platforms, services, infrastructure (AWS, Docker, Jira, etc.)
+
+SECTION DEFINITIONS for placement:
+- "skills": The skills section of the resume
+- "experience": Work experience bullet points
+- "summary": Professional summary statement
+- "projects": Project descriptions
+- "certifications": Certifications section
+
+Return ONLY a valid raw JSON object matching this exact structure:
+{
+  "keywordMatchPercentage": 65,
+  "confidenceScore": 85,
+  "summary": "Brief 2-3 sentence summary of the skill gap analysis...",
+  "criticalMissing": [
+    {
+      "skill": "Kubernetes",
+      "priority": "critical",
+      "category": "tool",
+      "confidence": 90,
+      "placement": [
+        {
+          "section": "skills",
+          "reason": "Why this placement improves ATS compatibility...",
+          "example": "Example text for how to incorporate this skill..."
+        }
+      ]
+    }
+  ],
+  "importantMissing": [
+    {
+      "skill": "System Design",
+      "priority": "important",
+      "category": "technical",
+      "confidence": 75,
+      "placement": [
+        {
+          "section": "experience",
+          "reason": "Why...",
+          "example": "Example..."
+        }
+      ]
+    }
+  ],
+  "niceToHave": [
+    {
+      "skill": "Terraform",
+      "priority": "nice-to-have",
+      "category": "tool",
+      "confidence": 55,
+      "placement": [
+        {
+          "section": "skills",
+          "reason": "Why...",
+          "example": "Example..."
+        }
+      ]
+    }
+  ],
+  "strongKeywords": [
+    { "keyword": "React", "status": "present", "frequency": 3, "suggestion": "Well-represented." }
+  ],
+  "missingKeywords": [
+    { "keyword": "distributed systems", "status": "missing", "suggestion": "Add to summary or experience." }
+  ],
+  "overusedKeywords": [
+    { "keyword": "worked", "status": "overused", "frequency": 5, "suggestion": "Use stronger action verbs." }
+  ],
+  "weakAreas": [
+    { "area": "Cloud Infrastructure", "reason": "No cloud platform references.", "actionItem": "Add AWS/GCP to skills and experience." }
+  ],
+  "actionItems": [
+    "Specific action item 1...",
+    "Specific action item 2..."
+  ]
+}
+
+Rules:
+- Do NOT fabricate skills that are not in the JD or resume.
+- Provide at least 2 and at most 5 criticalMissing items.
+- Provide at least 2 and at most 6 importantMissing items.
+- Provide at most 4 niceToHave items.
+- Each skill must have at least 1 placement recommendation.
+- confidence values must be 0-100 integers.
+- keywordMatchPercentage must be 0-100.
+- Return ONLY raw JSON. No markdown, no code blocks.
+`;
+
+  const result = await model.generateContent(prompt);
+  const outputText = result.response.text().trim();
+  const cleanJson = outputText.replace(/^```json\s*/i, '').replace(/```$/, '').trim();
+
+  try {
+    return JSON.parse(cleanJson) as SkillGapResult;
+  } catch (err) {
+    console.error('analyzeSkillGap: Failed to parse Gemini JSON output:', err, outputText);
+    // Return a minimal fallback so UI doesn't crash
+    return {
+      keywordMatchPercentage: 50,
+      confidenceScore: 60,
+      summary: 'Analysis complete. Some recommendations could not be parsed — please try reanalyzing.',
+      criticalMissing: [],
+      importantMissing: [],
+      niceToHave: [],
+      strongKeywords: [],
+      missingKeywords: [],
+      overusedKeywords: [],
+      weakAreas: [{ area: 'Parse Error', reason: 'AI response could not be parsed.', actionItem: 'Click Reanalyze to try again.' }],
+      actionItems: ['Click Reanalyze to get fresh suggestions.']
+    };
+  }
+}
 

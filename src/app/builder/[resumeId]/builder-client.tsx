@@ -47,7 +47,13 @@ import {
   GitPullRequest,
   Sparkles,
   Sun,
-  Moon
+  Moon,
+  Code,
+  GraduationCap,
+  Briefcase,
+  FolderGit2,
+  Award,
+  Trophy
 } from 'lucide-react';
 import { PDFDownloadLink } from '@react-pdf/renderer';
 import { ResumePDFDocument } from '@/components/builder/pdf-document';
@@ -109,6 +115,29 @@ function convertHtmlToBulletArray(html: string): string[] {
   return html.replace(/<[^>]*>/g, '').split('\n').map(s => s.trim()).filter(Boolean);
 }
 
+function isResumeMostlyEmpty(data: any): boolean {
+  if (!data) return true;
+  const hasWork = data.workExperience && data.workExperience.length > 0;
+  const hasEducation = data.education && data.education.length > 0;
+  const hasProjects = data.projects && data.projects.length > 0;
+  const hasSkills = (data.skills?.technicalSkills && data.skills.technicalSkills.length > 0) ||
+                    (data.skills?.softSkills && data.skills.softSkills.length > 0);
+  const hasSummary = data.personalInfo?.summary && data.personalInfo.summary.trim().length > 10;
+  const hasCertificates = data.certificates && data.certificates.length > 0;
+  const hasAchievements = data.achievements && data.achievements.length > 0;
+  
+  return !hasWork && !hasEducation && !hasProjects && !hasSkills && !hasSummary && !hasCertificates && !hasAchievements;
+}
+
+const ONBOARDING_STEPS = [
+  { step: 'education', label: 'Education', section: 'education' },
+  { step: 'experience', label: 'Experience', section: 'workExperience' },
+  { step: 'skills', label: 'Skills', section: 'skills' },
+  { step: 'projects', label: 'Projects', section: 'projects' },
+  { step: 'summary', label: 'Summary', section: 'summary' },
+  { step: 'finalReview', label: 'Final Review', section: 'finalReview' }
+];
+
 // Wrap inside ToastProvider to leverage useToast() internally
 export function BuilderClient(props: BuilderClientProps) {
   return (
@@ -130,6 +159,10 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [activeSection, setActiveSection] = useState<string>('personalInfo');
   const [isAiOpen, setIsAiOpen] = useState(false);
+  
+  // Onboarding States
+  const [isOnboardingActive, setIsOnboardingActive] = useState<boolean>(false);
+  const [onboardingStep, setOnboardingStep] = useState<string>('welcome');
   const [workspaceTheme, setWorkspaceTheme] = useState<'dark' | 'light'>('dark');
   const [resumeStatus, setResumeStatus] = useState<'draft' | 'completed'>(initialData?.resume_data?.status || 'draft');
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -352,6 +385,133 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
 
   const { watch, handleSubmit, setValue } = methods;
   const formData = watch();
+
+  const updateOnboardingStep = (nextStep: string) => {
+    setOnboardingStep(nextStep);
+    try {
+      const stored = localStorage.getItem(`resume_onboarding_${resumeId}`);
+      const parsed = stored ? JSON.parse(stored) : { skipped: false, completed: false };
+      localStorage.setItem(
+        `resume_onboarding_${resumeId}`,
+        JSON.stringify({
+          ...parsed,
+          step: nextStep,
+        })
+      );
+    } catch (err) {
+      console.error('Error saving onboarding step:', err);
+    }
+
+    const sectionMap: Record<string, string> = {
+      education: 'education',
+      experience: 'workExperience',
+      skills: 'skills',
+      projects: 'projects',
+      summary: 'summary',
+      finalReview: 'finalReview',
+    };
+    if (sectionMap[nextStep]) {
+      setActiveSection(sectionMap[nextStep]);
+    }
+  };
+
+  const handleSkipOnboarding = () => {
+    setIsOnboardingActive(false);
+    try {
+      localStorage.setItem(
+        `resume_onboarding_${resumeId}`,
+        JSON.stringify({
+          skipped: true,
+          completed: false,
+          step: onboardingStep,
+        })
+      );
+    } catch (err) {
+      console.error('Error saving skip state:', err);
+    }
+    if (activeSection === 'finalReview') {
+      setActiveSection('personalInfo');
+    }
+  };
+
+  const handleCompleteOnboarding = () => {
+    setIsOnboardingActive(false);
+    try {
+      localStorage.setItem(
+        `resume_onboarding_${resumeId}`,
+        JSON.stringify({
+          skipped: false,
+          completed: true,
+          step: 'finalReview',
+        })
+      );
+    } catch (err) {
+      console.error('Error saving complete state:', err);
+    }
+    setActiveSection('personalInfo');
+  };
+
+  const handleResetOnboarding = () => {
+    setIsOnboardingActive(true);
+    updateOnboardingStep('welcome');
+    toast.success('Guided onboarding tour restarted!');
+  };
+
+  // Sync activeSection click from left sidebar with onboarding step
+  useEffect(() => {
+    if (!isOnboardingActive) return;
+    const matched = ONBOARDING_STEPS.find((s) => s.section === activeSection);
+    if (matched) {
+      setOnboardingStep(matched.step);
+    }
+  }, [activeSection, isOnboardingActive]);
+
+  // Load initial onboarding state from localStorage or calculate empty resume
+  useEffect(() => {
+    if (!isMounted) return;
+    try {
+      const stored = localStorage.getItem(`resume_onboarding_${resumeId}`);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed.skipped || parsed.completed) {
+          setIsOnboardingActive(false);
+        } else {
+          setIsOnboardingActive(true);
+          setOnboardingStep(parsed.step || 'welcome');
+
+          const sectionMap: Record<string, string> = {
+            education: 'education',
+            experience: 'workExperience',
+            skills: 'skills',
+            projects: 'projects',
+            summary: 'summary',
+            finalReview: 'finalReview',
+          };
+          if (parsed.step && sectionMap[parsed.step]) {
+            setActiveSection(sectionMap[parsed.step]);
+          }
+        }
+      } else {
+        const isEmpty = isResumeMostlyEmpty(methods.getValues());
+        if (isEmpty) {
+          setIsOnboardingActive(true);
+          setOnboardingStep('welcome');
+          localStorage.setItem(
+            `resume_onboarding_${resumeId}`,
+            JSON.stringify({
+              skipped: false,
+              completed: false,
+              step: 'welcome',
+            })
+          );
+        } else {
+          setIsOnboardingActive(false);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading onboarding state:', err);
+    }
+  }, [isMounted, resumeId]);
 
   // Undo function
   const undo = () => {
@@ -1057,6 +1217,26 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
     certificates: 'Certifications',
     achievements: 'Achievements',
   };
+  const getCoreCompletionPercentage = (): number => {
+    let completeSectionsCount = 0;
+    if (formData.education && formData.education.length > 0) {
+      completeSectionsCount++;
+    }
+    if (formData.workExperience && formData.workExperience.length > 0) {
+      completeSectionsCount++;
+    }
+    if ((formData.skills?.technicalSkills && formData.skills.technicalSkills.length > 0) || 
+        (formData.skills?.softSkills && formData.skills.softSkills.length > 0)) {
+      completeSectionsCount++;
+    }
+    if (formData.projects && formData.projects.length > 0) {
+      completeSectionsCount++;
+    }
+    if (formData.personalInfo?.summary && formData.personalInfo.summary.trim().length > 10) {
+      completeSectionsCount++;
+    }
+    return completeSectionsCount * 20;
+  };
 
   // Section completion checks
   const isSectionComplete = (key: string): boolean => {
@@ -1652,84 +1832,414 @@ function BuilderWorkspace({ resumeId, initialData, userEmail, profile }: Builder
               {/* Form Content Area */}
               <div className="space-y-6">
                 
-                {/* Active Section Header Indicator */}
-                <div className="flex items-center gap-1.5 text-xxs text-indigo-400 uppercase tracking-widest font-bold">
-                  <span>Step {currentIdx + 1} of {activeOrder.length}</span>
-                  <ChevronRight className="w-3 h-3" />
-                  <span className={`${workspaceTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
-                    {activeSection.startsWith('custom_')
-                      ? ((formData.customSections as any)?.[activeSection]?.title || 'Custom Section')
-                      : (sectionLabels[activeSection] || activeSection)}
-                  </span>
-                </div>
+                {isOnboardingActive && onboardingStep !== 'welcome' && (
+                  /* ==========================================
+                     ONBOARDING STEPPER PROGRESS BAR
+                     ========================================== */
+                  <div className={`p-4 rounded-2xl border ${
+                    workspaceTheme === 'dark' ? 'bg-slate-950/60 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+                  }`}>
+                    <div className="flex justify-between items-center mb-4 px-1">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-indigo-400 animate-pulse" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Guided Resume Tour</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSkipOnboarding}
+                        className="text-[10px] font-bold text-slate-500 hover:text-indigo-400 uppercase tracking-wider transition-colors cursor-pointer"
+                      >
+                        Skip Tour
+                      </button>
+                    </div>
+                    <div className="relative flex items-center justify-between w-full px-2">
+                      {/* Background track line */}
+                      <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-0.5 bg-slate-800 pointer-events-none z-0" />
+                      
+                      {/* Active step progress indicator fill */}
+                      <div 
+                        className="absolute left-0 top-1/2 -translate-y-1/2 h-0.5 bg-indigo-500 transition-all duration-500 pointer-events-none z-0"
+                        style={{
+                          width: `${
+                            (ONBOARDING_STEPS.findIndex(s => s.step === onboardingStep) / (ONBOARDING_STEPS.length - 1)) * 100
+                          }%`
+                        }}
+                      />
 
-                {/* Render corresponding form */}
-                <div className="animate-fade-in duration-200">
-                  {activeSection === 'personalInfo' && <PersonalInfoForm />}
-                  {activeSection === 'summary' && <SummaryForm />}
-                  {activeSection === 'workExperience' && <ExperienceForm />}
-                  {activeSection === 'education' && <EducationForm />}
-                  {activeSection === 'projects' && <ProjectsForm />}
-                  {activeSection === 'skills' && <SkillsForm />}
-                  {activeSection === 'certificates' && <CertificatesForm />}
-                  {activeSection === 'achievements' && <AchievementsForm />}
-                  {activeSection.startsWith('custom_') && <CustomSectionForm sectionId={activeSection} />}
-                </div>
+                      {ONBOARDING_STEPS.map((s, idx) => {
+                        const isStepActive = onboardingStep === s.step;
+                        const isStepComplete = s.step === 'finalReview' 
+                          ? getCoreCompletionPercentage() === 100
+                          : (s.step === 'education' ? (formData.education && formData.education.length > 0)
+                             : s.step === 'experience' ? (formData.workExperience && formData.workExperience.length > 0)
+                             : s.step === 'skills' ? ((formData.skills?.technicalSkills && formData.skills.technicalSkills.length > 0) || (formData.skills?.softSkills && formData.skills.softSkills.length > 0))
+                             : s.step === 'projects' ? (formData.projects && formData.projects.length > 0)
+                             : (formData.personalInfo?.summary && formData.personalInfo.summary.trim().length > 10));
+
+                        return (
+                          <button
+                            key={s.step}
+                            type="button"
+                            onClick={() => updateOnboardingStep(s.step)}
+                            className="relative z-10 flex flex-col items-center gap-1.5 focus:outline-none group cursor-pointer"
+                          >
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300 border ${
+                              isStepActive
+                                ? 'bg-indigo-600 border-indigo-500 text-white scale-110 shadow-lg shadow-indigo-600/30'
+                                : isStepComplete
+                                ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
+                                : workspaceTheme === 'dark'
+                                ? 'bg-slate-900 border-slate-800 text-slate-500 hover:text-slate-300 hover:border-slate-700'
+                                : 'bg-slate-100 border-slate-200 text-slate-600 hover:text-slate-900'
+                            }`}>
+                              {isStepComplete ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : idx + 1}
+                            </div>
+                            <span className={`text-[9px] font-bold tracking-wide hidden sm:block ${
+                              isStepActive 
+                                ? 'text-indigo-400' 
+                                : isStepComplete 
+                                ? 'text-emerald-500' 
+                                : 'text-slate-500'
+                            }`}>
+                              {s.label}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Onboarding Welcome Card */}
+                {isOnboardingActive && onboardingStep === 'welcome' && (
+                  <div className="bg-slate-900/30 border border-slate-800/80 rounded-3xl p-8 space-y-6 backdrop-blur-md text-center max-w-xl mx-auto my-8 relative overflow-hidden group hover:border-indigo-500/20 transition-all duration-300 animate-fade-in">
+                    <div className="absolute top-[-50px] right-[-50px] w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+                    
+                    <div className="w-16 h-16 rounded-3xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mx-auto group-hover:scale-105 group-hover:bg-indigo-500/20 transition-all duration-300 mb-2">
+                      <Sparkles className="w-7 h-7 text-indigo-400 animate-pulse" />
+                    </div>
+
+                    <div className="space-y-2">
+                      <h3 className="text-xl font-extrabold text-white tracking-tight">Welcome to Your Resume Workspace</h3>
+                      <p className="text-xs text-slate-300 max-w-md mx-auto leading-relaxed font-light">
+                        Welcome! I've set up your resume workspace. To build a strong resume, let's start with a solid foundation. I recommend beginning with the Education section. Ready to start?
+                      </p>
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row gap-3 justify-center items-center pt-2">
+                      <button
+                        type="button"
+                        onClick={() => updateOnboardingStep('education')}
+                        className="w-full sm:w-auto px-6 py-2.5 text-xs font-bold text-white bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 rounded-xl transition-all duration-200 shadow-lg shadow-indigo-600/20 cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        Go to Education
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSkipOnboarding}
+                        className="w-full sm:w-auto px-6 py-2.5 text-xs font-semibold text-slate-400 hover:text-white bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-xl transition-all cursor-pointer"
+                      >
+                        Skip Guided Tour
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Onboarding Final Review Screen */}
+                {isOnboardingActive && onboardingStep === 'finalReview' && activeSection === 'finalReview' && (
+                  <div className="bg-slate-900/30 border border-slate-800/80 rounded-3xl p-8 space-y-6 backdrop-blur-md max-w-xl mx-auto my-8 animate-fade-in relative overflow-hidden group hover:border-indigo-500/25 transition-all duration-300">
+                    <div className="absolute top-[-50px] right-[-50px] w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+
+                    <div className="flex items-center gap-3 border-b border-slate-800/85 pb-4">
+                      <div className="w-10 h-10 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-400 animate-pulse" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-extrabold text-white tracking-tight">Foundations Complete!</h3>
+                        <p className="text-[10px] text-slate-400 font-light">Great job building the core components of your resume.</p>
+                      </div>
+                    </div>
+
+                    {/* Completion progress bar */}
+                    <div className="space-y-2">
+                      <div className="flex justify-between items-center text-xxs font-bold text-slate-400">
+                        <span>FOUNDATIONAL SECTIONS STATUS</span>
+                        <span className="text-indigo-400 font-mono text-xs">{getCoreCompletionPercentage()}%</span>
+                      </div>
+                      <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-gradient-to-r from-indigo-500 to-emerald-500 transition-all duration-500" 
+                          style={{ width: `${getCoreCompletionPercentage()}%` }} 
+                        />
+                      </div>
+                    </div>
+
+                    {/* Completion Checklist */}
+                    <div className="space-y-2.5 py-2">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Checklist Overview</span>
+                      {[
+                        { key: 'education', label: 'Education', icon: <GraduationCap className="w-4.5 h-4.5" /> },
+                        { key: 'workExperience', label: 'Work Experience', icon: <Briefcase className="w-4.5 h-4.5" /> },
+                        { key: 'skills', label: 'Skills Inventory', icon: <Code className="w-4.5 h-4.5" /> },
+                        { key: 'projects', label: 'Projects Showcase', icon: <FolderGit2 className="w-4.5 h-4.5" /> },
+                        { key: 'summary', label: 'Professional Summary', icon: <Sparkles className="w-4.5 h-4.5" /> }
+                      ].map(item => {
+                        const complete = item.key === 'education' ? (formData.education && formData.education.length > 0)
+                          : item.key === 'workExperience' ? (formData.workExperience && formData.workExperience.length > 0)
+                          : item.key === 'skills' ? ((formData.skills?.technicalSkills && formData.skills.technicalSkills.length > 0) || (formData.skills?.softSkills && formData.skills.softSkills.length > 0))
+                          : item.key === 'projects' ? (formData.projects && formData.projects.length > 0)
+                          : (formData.personalInfo?.summary && formData.personalInfo.summary.trim().length > 10);
+                        return (
+                          <div key={item.key} className="flex items-center justify-between p-3 bg-slate-950/40 border border-slate-900 rounded-xl">
+                            <div className="flex items-center gap-2.5">
+                              <div className={`p-1.5 rounded-lg border ${
+                                complete 
+                                  ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' 
+                                  : 'bg-slate-900 border-slate-800 text-slate-500'
+                              }`}>
+                                {item.icon}
+                              </div>
+                              <span className={`text-xs font-semibold ${complete ? 'text-slate-200' : 'text-slate-500 font-light'}`}>
+                                {item.label}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              {complete ? (
+                                <span className="text-[9px] bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                                  Filled
+                                </span>
+                              ) : (
+                                <span className="text-[9px] bg-slate-900 border border-slate-800 text-slate-500 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                                  Empty
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* CTAs */}
+                    <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                      <button
+                        type="button"
+                        onClick={handleExportPdf}
+                        className="w-full sm:flex-grow px-5 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-lg shadow-indigo-600/20 cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Download className="w-4 h-4" />
+                        Export Resume PDF
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCompleteOnboarding}
+                        className="w-full sm:flex-grow px-5 py-2.5 text-xs font-bold text-slate-300 hover:text-white bg-slate-900 border border-slate-800 hover:bg-slate-800 rounded-xl transition-all cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        Continue Editing
+                      </button>
+                    </div>
+
+                    <div className="text-center pt-2">
+                      <button
+                        type="button"
+                        onClick={handleResetOnboarding}
+                        className="text-[10px] font-bold text-slate-500 hover:text-indigo-400 uppercase tracking-widest transition-colors cursor-pointer"
+                      >
+                        Restart Guided Tour
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Standard forms display (when onboarding is not in welcome or finalReview steps) */}
+                {(!isOnboardingActive || (onboardingStep !== 'welcome' && activeSection !== 'finalReview')) && (
+                  <>
+                    {/* Non-blocking tour warning banner */}
+                    {isOnboardingActive && !ONBOARDING_STEPS.some(s => s.section === activeSection) && (
+                      <div className="bg-indigo-950/20 border border-indigo-500/20 rounded-xl p-3 text-xxs text-slate-400 flex items-center justify-between mb-4">
+                        <span>You are currently editing <strong>{sectionLabels[activeSection] || activeSection}</strong> outside the guided onboarding tour.</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const stepSec = ONBOARDING_STEPS.find(s => s.step === onboardingStep);
+                            if (stepSec) {
+                              setActiveSection(stepSec.section);
+                            }
+                          }}
+                          className="text-indigo-400 font-bold hover:underline cursor-pointer"
+                        >
+                          Return to Tour
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Active Section Header Indicator */}
+                    <div className="flex items-center gap-1.5 text-xxs text-indigo-400 uppercase tracking-widest font-bold">
+                      <span>Step {currentIdx + 1} of {activeOrder.length}</span>
+                      <ChevronRight className="w-3 h-3" />
+                      <span className={`${workspaceTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+                        {activeSection.startsWith('custom_')
+                          ? ((formData.customSections as any)?.[activeSection]?.title || 'Custom Section')
+                          : (sectionLabels[activeSection] || activeSection)}
+                      </span>
+                    </div>
+
+                    {/* Render corresponding form */}
+                    <div className="animate-fade-in duration-200">
+                      {activeSection === 'personalInfo' && <PersonalInfoForm />}
+                      {activeSection === 'summary' && <SummaryForm />}
+                      {activeSection === 'workExperience' && <ExperienceForm />}
+                      {activeSection === 'education' && <EducationForm />}
+                      {activeSection === 'projects' && <ProjectsForm />}
+                      {activeSection === 'skills' && <SkillsForm />}
+                      {activeSection === 'certificates' && <CertificatesForm />}
+                      {activeSection === 'achievements' && <AchievementsForm />}
+                      {activeSection.startsWith('custom_') && <CustomSectionForm sectionId={activeSection} />}
+                    </div>
+                  </>
+                )}
 
               </div>
 
               {/* Form Footer Navigation Controls */}
-              <div className={`flex items-center justify-between mt-10 pt-4 border-t ${
-                workspaceTheme === 'dark' ? 'border-slate-900' : 'border-slate-200'
-              }`}>
-                <button
-                  type="button"
-                  onClick={handlePrevSection}
-                  disabled={currentIdx === 0}
-                  className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl border transition-all ${
-                    currentIdx === 0
-                      ? 'opacity-30 cursor-not-allowed border-transparent text-slate-500'
-                      : workspaceTheme === 'dark'
-                      ? 'border-slate-800 bg-slate-900/40 text-slate-300 hover:text-white'
-                      : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                  Previous Section
-                </button>
+              {isOnboardingActive ? (
+                /* Customized Onboarding Footer */
+                onboardingStep !== 'welcome' && activeSection !== 'finalReview' && (
+                  <div className={`flex items-center justify-between mt-10 pt-4 border-t ${
+                    workspaceTheme === 'dark' ? 'border-slate-900' : 'border-slate-200'
+                  }`}>
+                    {/* Previous step button */}
+                    {onboardingStep === 'education' ? (
+                      <button
+                        type="button"
+                        onClick={handleSkipOnboarding}
+                        className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl border transition-all ${
+                          workspaceTheme === 'dark'
+                            ? 'border-slate-800 bg-slate-900/40 text-slate-400 hover:text-white'
+                            : 'border-slate-200 bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Skip Tour
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const idx = ONBOARDING_STEPS.findIndex(s => s.step === onboardingStep);
+                          if (idx > 0) {
+                            updateOnboardingStep(ONBOARDING_STEPS[idx - 1].step);
+                          }
+                        }}
+                        className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl border transition-all ${
+                          workspaceTheme === 'dark'
+                            ? 'border-slate-800 bg-slate-900/40 text-slate-300 hover:text-white'
+                            : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
+                        }`}
+                      >
+                        <ChevronLeft className="w-4 h-4" />
+                        Previous: {ONBOARDING_STEPS[ONBOARDING_STEPS.findIndex(s => s.step === onboardingStep) - 1].label}
+                      </button>
+                    )}
 
-                <div className="flex items-center gap-1.5">
-                  {activeOrder.map((sec) => (
-                    <button
-                      key={sec}
-                      type="button"
-                      onClick={() => setActiveSection(sec)}
-                      className={`w-2 h-2 rounded-full transition-all ${
-                        activeSection === sec 
-                          ? 'bg-indigo-500 scale-125' 
-                          : workspaceTheme === 'dark' ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-200 hover:bg-slate-300'
-                      }`}
-                      title={sectionLabels[sec]}
-                    />
-                  ))}
+                    {/* Stepper Dot Nav */}
+                    <div className="flex items-center gap-1.5">
+                      {ONBOARDING_STEPS.map((s) => (
+                        <button
+                          key={s.step}
+                          type="button"
+                          onClick={() => updateOnboardingStep(s.step)}
+                          className={`w-2 h-2 rounded-full transition-all ${
+                            onboardingStep === s.step 
+                              ? 'bg-indigo-500 scale-125' 
+                              : workspaceTheme === 'dark' ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-200 hover:bg-slate-300'
+                          }`}
+                          title={s.label}
+                        />
+                      ))}
+                    </div>
+
+                    {/* Next step button */}
+                    {onboardingStep === 'summary' ? (
+                      <button
+                        type="button"
+                        onClick={() => updateOnboardingStep('finalReview')}
+                        className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md shadow-indigo-600/10 cursor-pointer"
+                      >
+                        Next: Final Review
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const idx = ONBOARDING_STEPS.findIndex(s => s.step === onboardingStep);
+                          if (idx !== -1 && idx < ONBOARDING_STEPS.length - 1) {
+                            updateOnboardingStep(ONBOARDING_STEPS[idx + 1].step);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition-all shadow-md shadow-indigo-600/10 cursor-pointer"
+                      >
+                        Next: {ONBOARDING_STEPS[ONBOARDING_STEPS.findIndex(s => s.step === onboardingStep) + 1].label}
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                )
+              ) : (
+                /* Standard Form Footer Controls */
+                <div className={`flex items-center justify-between mt-10 pt-4 border-t ${
+                  workspaceTheme === 'dark' ? 'border-slate-900' : 'border-slate-200'
+                }`}>
+                  <button
+                    type="button"
+                    onClick={handlePrevSection}
+                    disabled={currentIdx === 0}
+                    className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl border transition-all ${
+                      currentIdx === 0
+                        ? 'opacity-30 cursor-not-allowed border-transparent text-slate-500'
+                        : workspaceTheme === 'dark'
+                        ? 'border-slate-800 bg-slate-900/40 text-slate-300 hover:text-white'
+                        : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    Previous Section
+                  </button>
+
+                  <div className="flex items-center gap-1.5">
+                    {activeOrder.map((sec) => (
+                      <button
+                        key={sec}
+                        type="button"
+                        onClick={() => setActiveSection(sec)}
+                        className={`w-2 h-2 rounded-full transition-all ${
+                          activeSection === sec 
+                            ? 'bg-indigo-500 scale-125' 
+                            : workspaceTheme === 'dark' ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-200 hover:bg-slate-300'
+                        }`}
+                        title={sectionLabels[sec]}
+                      />
+                    ))}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleNextSection}
+                    disabled={currentIdx === activeOrder.length - 1}
+                    className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl border transition-all ${
+                      currentIdx === activeOrder.length - 1
+                        ? 'opacity-30 cursor-not-allowed border-transparent text-slate-500'
+                        : workspaceTheme === 'dark'
+                        ? 'border-slate-800 bg-slate-900/40 text-slate-300 hover:text-white'
+                        : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
+                    }`}
+                  >
+                    Next Section
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={handleNextSection}
-                  disabled={currentIdx === activeOrder.length - 1}
-                  className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl border transition-all ${
-                    currentIdx === activeOrder.length - 1
-                      ? 'opacity-30 cursor-not-allowed border-transparent text-slate-500'
-                      : workspaceTheme === 'dark'
-                      ? 'border-slate-800 bg-slate-900/40 text-slate-300 hover:text-white'
-                      : 'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200'
-                  }`}
-                >
-                  Next Section
-                  <ChevronRight className="w-4 h-4" />
-                </button>
-              </div>
+              )}
 
             </div>
           </div>

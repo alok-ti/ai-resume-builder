@@ -18,7 +18,9 @@ import {
   auditResume,
   improveEntireResume,
   chatAssistantStream,
-  generateCareerAssistantContent
+  generateCareerAssistantContent,
+  rewriteExperienceBullet,
+  analyzeSkillGap
 } from '@/lib/gemini';
 
 export async function POST(request: Request) {
@@ -227,6 +229,24 @@ export async function POST(request: Request) {
         jobDescription,
         input
       });
+      return NextResponse.json(result);
+    }
+
+    // ==========================================
+    // 16. PREMIUM EXPERIENCE BULLET REWRITER ACTION
+    // ==========================================
+    if (action === 'bullet-rewrite') {
+      const { bullet = '', position = '', company = '' } = body;
+      const suggestions = await rewriteExperienceBullet(bullet, position, company);
+      return NextResponse.json(suggestions);
+    }
+
+    // ==========================================
+    // 17. ATS SKILL GAP ANALYZER ACTION
+    // ==========================================
+    if (action === 'skill-gap') {
+      const { resumeData, jobDescription = '' } = body;
+      const result = await analyzeSkillGap(resumeData, jobDescription);
       return NextResponse.json(result);
     }
 
